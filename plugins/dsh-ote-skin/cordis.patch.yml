@@ -1,0 +1,14 @@
+# dsh-ote-skin — profile bundle patch.
+#
+# The skin is entirely browser-side: this host row exists only so the harness
+# serves the package's `dsh.client` bundle into the boot graph, and its `apply`
+# does nothing.
+#
+# The browser half changes nothing in place. Colours go through the host's own
+# `ctx.theme.overrideTokens()` (the host owns the <body> custom properties, so
+# disposing our layer restores the stock theme exactly), and the few component
+# rules live in a <style> element this plugin owns and removes. Removing this
+# row — or disabling it — brings the stock shell back untouched.
+- insert:
+    - id: ote-skin
+      name: dsh-ote-skin

@@ -1,0 +1,53 @@
+{
+  "name": "dsh-ote-skin",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Oltra graphite skin for the DSH Web shell: repaints the shell with a single orange accent, a four-step graphite ladder, borderless layering and small radii - by overriding the published --dsw-alias-* design tokens plus a small set of component rules. No layout change, no typography change.",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "skin",
+    "theme",
+    "oltra",
+    "ote-work"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "docs",
+    "tests",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node tests/run.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [],
+      "immediately": true
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4"
+  },
+  "engines": {
+    "node": ">=22.19"
+  }
+}
