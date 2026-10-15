@@ -1,0 +1,13 @@
+# dsh-token-hud — profile bundle patch.
+#
+# One host row. The browser half is delivered through this row's `dsh.client`
+# declaration, so no second row is needed.
+#
+# The block lives inside the left sidebar (the `sidebar.footer.action` seat,
+# directly above the Settings row), so there is nothing to position here.
+- insert:
+    - id: token-hud
+      name: dsh-token-hud
+      config:
+        enabled: true
+        intervalMs: 20000

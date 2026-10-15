@@ -1,0 +1,49 @@
+{
+  "name": "dsh-token-hud",
+  "version": "0.1.0",
+  "private": true,
+  "description": "An iOS-style token meter card in the DeepSeek Harness sidebar footer: all-time usage, today's usage and cache hit rate, aggregated from the session projection cache.",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "tokens",
+    "usage",
+    "hud"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node tests/run.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4"
+  },
+  "engines": {
+    "node": ">=22.19"
+  }
+}

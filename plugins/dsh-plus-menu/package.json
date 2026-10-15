@@ -1,0 +1,42 @@
+{
+  "name": "dsh-plus-menu",
+  "version": "0.1.0",
+  "description": "Codex-style context menu for the DeepSeek Harness composer: the + button lists Skills, MCP tools and slash commands in one grouped menu.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node tests/run.mjs",
+    "probe:mcp": "node tests/probe-mcp.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "private": true
+}

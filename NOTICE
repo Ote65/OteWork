@@ -1,0 +1,49 @@
+# Third-party notices
+
+This repository is an independent customization set for **DeepSeek Harness**.
+It redistributes **none** of DeepSeek Harness itself — no application binary, no
+`app.asar`, and no `@deepseek-ai/*` package. The plugins here only interoperate
+with a DeepSeek Harness installation you already have.
+
+## DeepSeek Harness
+
+The plugins in this repository target DeepSeek Harness, and their documentation
+quotes the public interfaces of its packages.
+
+```
+DeepSeek Harness
+Copyright (c) 2026 DeepSeek
+Licensed under the MIT License
+```
+
+The MIT text above is reproduced from the `LICENSE` file shipped inside the
+DeepSeek Harness packages (`@deepseek-ai/dsh-base`, `@deepseek-ai/dsh`,
+`@deepseek-ai/dsh-brand`, `@deepseek-ai/dsh-web-app`, `@deepseek-ai/cordis`, …),
+each of which declares `"license": "MIT"`.
+
+DeepSeek Harness is a product of DeepSeek. This repository is not affiliated
+with, endorsed by, or sponsored by DeepSeek.
+
+## Baloo 2 (wordmark artwork)
+
+`plugins/dsh-ote-brand/assets/baloo2-700-latin.woff2` is the Baloo 2 Bold (700)
+Latin subset, vendored as the regeneration source for the outlined OTE Work
+wordmark. It is never served to the browser.
+
+```
+Baloo 2
+Copyright (c) 2019 The Baloo 2 Project Authors
+Designer: Ek Type
+Licensed under the SIL Open Font License, Version 1.1
+Upstream: https://github.com/google/fonts/tree/main/ofl/baloo2
+```
+
+The full license text ships beside the font at
+[`plugins/dsh-ote-brand/assets/OFL-Baloo2.txt`](plugins/dsh-ote-brand/assets/OFL-Baloo2.txt).
+
+## Not included
+
+- **`dsh-context-doctor`** — a separate, third-party DSH plugin by
+  [Zhenyu98](https://github.com/Zhenyu98/dsh-context-doctor), licensed
+  BSD-3-Clause. It is a dependency of the author's local profile and is
+  deliberately not redistributed here.

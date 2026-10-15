@@ -1,0 +1,63 @@
+{
+  "name": "dsh-ote-brand",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OTE Work brand skin for the DSH Web shell: occupies the sidebar brand slots and the conversation hero brand seat, replacing the shipped DeepSeek mark, wordmark, headline copy and preview pill.",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "brand",
+    "logo",
+    "ote-work",
+    "skin"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "tools",
+    "assets",
+    "docs",
+    "tests",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node tools/make-mark.mjs && node tools/make-wordmark.mjs && node tools/embed-mark.mjs",
+    "build:mark": "node tools/make-mark.mjs",
+    "build:wordmark": "node tools/make-wordmark.mjs",
+    "build:embed": "node tools/embed-mark.mjs",
+    "preview": "node tools/preview.mjs",
+    "test": "node tests/run.mjs",
+    "measure:strokes": "node tools/measure-strokes.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4"
+  },
+  "engines": {
+    "node": ">=22.19"
+  }
+}

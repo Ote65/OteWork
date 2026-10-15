@@ -1,0 +1,12 @@
+# The dsh-plus-menu bundle patch: one host row. The row's config is the
+# plugin's own settings; the browser half reads the section order back from
+# the plugin's own read-only MCP route.
+- insert:
+    - id: plus-menu
+      name: dsh-plus-menu
+      config:
+        # Menu sections, in the order the + menu renders them.
+        sections:
+          - skills
+          - mcp
+          - commands

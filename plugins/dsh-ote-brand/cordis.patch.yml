@@ -1,0 +1,13 @@
+# dsh-ote-brand — profile bundle patch.
+#
+# The re-skin is entirely browser-side: this host row exists only so the harness
+# serves the package's `dsh.client` bundle into the boot graph, and its `apply`
+# does nothing.
+#
+# The browser half does NOT disable @deepseek-ai/dsh-client-ui-brand-official.
+# It registers into the same `single` slots at priority -1, which shadows the
+# official occupants (the lowest priority renders) and keeps the change fully
+# reversible: removing this row brings the stock brand back untouched.
+- insert:
+    - id: ote-brand
+      name: dsh-ote-brand

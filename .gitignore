@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# local state / logs
+*.log
+.DS_Store
+Thumbs.db
+
+# never commit secrets
+.env
+.env.*
+*.local

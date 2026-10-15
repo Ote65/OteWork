@@ -1,0 +1,21 @@
+{
+  "name": "dsh-picker-probe",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Throwaway diagnostic: opens the built-in browser at a test page and drives the element picker through the real webview bridge.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": { "default": "./lib/index.js" },
+    "./client": { "default": "./lib/client.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["lib", "cordis.patch.yml"],
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": { "platform": "web", "inject": [] }
+  },
+  "peerDependencies": { "@deepseek-ai/cordis": "~4.0.4" },
+  "engines": { "node": ">=22.19" }
+}

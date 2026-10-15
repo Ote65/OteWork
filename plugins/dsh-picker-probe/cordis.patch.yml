@@ -1,0 +1,4 @@
+# dsh-picker-probe — throwaway diagnostic row.
+- insert:
+    - id: picker-probe
+      name: dsh-picker-probe

@@ -1,0 +1,7 @@
+# dsh-element-picker — profile bundle patch.
+#
+# The feature is entirely browser-side: the host row exists only so the harness
+# serves this package's `dsh.client` bundle, and its `apply` does nothing.
+- insert:
+    - id: element-picker
+      name: dsh-element-picker

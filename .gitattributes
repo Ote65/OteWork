@@ -1,0 +1,8 @@
+# Normalize text files to LF in the repository and on checkout, so the plugin
+# sources, patches and docs stay byte-identical across platforms.
+* text=auto eol=lf
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.woff2 binary
