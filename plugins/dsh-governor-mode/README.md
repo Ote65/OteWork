@@ -7,13 +7,14 @@ DSH 的默认且唯一工作模式（总督模式 v2）。总督面板挂在右�
 ### 浏览器半（lib/client.js）
 
 1. **侧栏拦截（无条件）**：工作区行的点击（捕获阶段，`[data-row-key^="workspace:"]`）改为打开总督面板，**不展开**会话列表；行内交互控件（button / a / input / select / textarea / label / `[role="button"]` / 展开 data 属性白名单）照旧放行。
-2. **总督面板，四区内容同一套**：
-   - **roster 区**：总督头像 64px（点击打开总督会话）+ ≤8 个手下头像 48px（1/2/3/4 居中、5→3+2、6→3+3、7→4+3、8→4+4 排布）+ 状态灯（idle / ongoing 呼吸 / done / warning）+ 直角母线连线 + 手下分支名小标签（取自 git-state 的 `sub/<名>`）；
+2. **原生「新建会话」按钮 = 新建工作面板**：DSH 侧栏那个 `aria-label="新建会话"` 的图标按钮被接管——点击改为走官方目录选择器 + 官方工作区创建（`uiWorkspace.pickDirectory()` → `workspaces.create({path})`），新建的工作区由差集轮询自动补总督会话与提示词。悬停提示里的「新建会话」文案改写为「新建工作面板」（`sidebar` 命名空间已被官方占用，`ctx.locale.register` 会抛错，所以只改文案；`aria-label` 保持原样，拦截器靠它定位）。注：快捷键（非点击）仍走官方行为。
+3. **总督面板，四区内容同一套**：
+   - **roster 区**：总督头像 64px（点击打开总督会话）+ ≤8 个手下头像 48px（1/2/3/4 居中、5→3+2、6→3+3、7→4+3、8→4+4 排布）+ 状态灯（idle / ongoing 呼吸 / done / warning）+ 直角母线连线 + 手下分支名小标签（取自 git-state 的 `sub/<名>`）；**新增手下子会话的唯一入口是总督栏右侧的「＋」**（`uiWorkspace.startSession(workspaceId)`，满 8 个置灰）；
    - **选择题卡区**：轮询待答问题（问题 + 选项 + 来源手下），点选即代答；头部是 autoAnswer 开关（读写 `/settings`）；
    - **git 区**：dev 同步灯（`devSynced` 绿 / 否则橙 + ahead/behind / 无快照灰）+ 三按钮「同步 GitHub」「汇报」「预览」（预览走 `ctx.sidebarRight.openTabIn(sessionId, 'browser', {params:{url}})`，git-state 里没有合法 http(s) 地址时置灰）；
    - **输入井**：目标下拉（总督 / 各手下 / 全体）+ 文本 → `POST /api/governor/prompt`；发不出去时降级为 v1 验证过的草稿搬运桥（打开目标会话 + `conversation.input.left` 把文字落进它的输入框）。
-3. **新建工作区 = 新建总督**：轮询 `useWorkspaces` 差集，新工作区无会话则 `uiWorkspace.startSession` 懒建总督会话，会话就位后 `POST /bootstrap` 注入总督提示词（受 `settings.autostart` 控制，默认开）。**用户既有的工作区（已有会话）不打扰**——不建会话也不注入提示词。
-4. **轮询克制**：roster/questions 2s、git-state 10s，页面不可见统一降到 15s，卸载清干净。
+4. **新建工作区 = 新建总督**：轮询 `useWorkspaces` 差集，新工作区无会话则 `uiWorkspace.startSession` 懒建总督会话，会话就位后 `POST /bootstrap` 注入总督提示词（受 `settings.autostart` 控制，默认开）。**用户既有的工作区（已有会话）不打扰**——不建会话也不注入提示词。
+5. **轮询克制**：roster/questions 2s、git-state 10s，页面不可见统一降到 15s，卸载清干净。
 
 ### 宿主半（lib/index.js，`/api/governor` 九路由）
 

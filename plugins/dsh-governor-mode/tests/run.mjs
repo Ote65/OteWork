@@ -505,6 +505,7 @@ function loadBundle(options = {}) {
   const openCalls = []
   const paneCalls = []
   const rightbarCalls = []
+  const createCalls = []
   const baseCtx = {
     effect(body) {
       const dispose = body()
@@ -531,6 +532,13 @@ function loadBundle(options = {}) {
     uiWorkspace: {
       startSession: (wid) => { startCalls.push(wid) },
       openSession: (id) => { openCalls.push(id) },
+      pickDirectory: () => Promise.resolve(options.pickPath ?? '/tmp/governor-panel'),
+    },
+    workspaces: {
+      create: (input) => {
+        createCalls.push(input)
+        return Promise.resolve({ workspaceId: options.newWorkspaceId ?? 'w-new-panel' })
+      },
     },
   }
   if (options.paneRegister === true) {
@@ -556,7 +564,7 @@ function loadBundle(options = {}) {
 
   return {
     spec, exported, react, attrs, listeners, head, disposers,
-    injected, registrations, startCalls, openCalls, paneCalls, rightbarCalls, ctx,
+    injected, registrations, startCalls, openCalls, paneCalls, rightbarCalls, createCalls, ctx,
     internals: exported.__internals,
   }
 }
@@ -655,7 +663,7 @@ async function runClient(reportFn) {
 
   suite.check('sidebar interceptor passes inline controls and captures workspace rows', () => {
     const bundle = loadBundle()
-    const { PASS_SELECTOR } = bundle.internals
+    const { PASS_SELECTOR, NEW_SESSION_SELECTOR } = bundle.internals
     equal(bundle.listeners.click.length, 1, 'one capturing click listener')
     const handler = bundle.listeners.click[0]
     const prevented = { value: false }
@@ -675,6 +683,26 @@ async function runClient(reportFn) {
     handler(makeEvent({ closest: (selector) => (selector.startsWith('[data-row-key') ? row : null) }))
     equal(prevented.value, true, 'workspace row is intercepted')
     equal(bundle.internals.state.workspaceId, 'w9', 'the workspace is selected')
+    // 原生新建会话控件按 aria-label 定位（走下一个用例的分支，不落到行点击上）
+    includes(NEW_SESSION_SELECTOR, 'aria-label="新建会话"', 'native new-session control is matched by aria-label')
+  })
+
+  await suite.checkAsync('the native new-session control means new workspace panel', async () => {
+    const bundle = loadBundle()
+    const handler = bundle.listeners.click[0]
+    const event = {
+      target: { closest: (selector) => (selector.startsWith('button[aria-label') ? {} : null) },
+      prevented: false,
+      preventDefault() { this.prevented = true },
+      stopPropagation() {},
+      stopImmediatePropagation() {},
+    }
+    handler(event)
+    equal(event.prevented, true, 'native new-session click is hijacked')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    equal(bundle.createCalls.length, 1, 'one workspace created from the picked directory')
+    equal(bundle.createCalls[0].path, '/tmp/governor-panel', 'the picked path is adopted')
+    equal(bundle.internals.state.workspaceId, 'w-new-panel', 'the new panel becomes the selected workspace')
   })
 
   suite.check('avatar seeds are stable and faces are generated', () => {
@@ -843,7 +871,14 @@ async function runClient(reportFn) {
     includes(texts, '2 / 8', 'worker count')
     includes(texts, '总督会话', 'governor button')
     includes(texts, '甲', 'worker label')
-    includes(texts, '新建手下', 'add button')
+    // 加号在总督栏右侧，是新增手下子会话的唯一入口；网格里的加卡片已删
+    equal(texts.includes('新建手下'), false, 'the grid add card is gone')
+    const add = findByClass(element, 'dsh-gov-add')
+    equal(add.length, 1, 'one head add button')
+    equal(add[0].props.children, '+', 'plus glyph')
+    equal(add[0].props.disabled, false, 'enabled while there is room for another worker')
+    add[0].props.onClick()
+    equal(bundle.startCalls.join(','), 'w1', 'the plus starts a worker session in this workspace')
     includes(texts, '自动作答', 'autoAnswer toggle')
     includes(texts, '暂无待答', 'questions empty state')
     includes(texts, '待总督汇报', 'git state')

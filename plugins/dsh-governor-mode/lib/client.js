@@ -46,6 +46,10 @@ window.__ModuleLoader__.load({
     var HIDDEN_MS = 15000
     /** 侧栏行点击放行白名单：行内交互控件与官方展开控件照旧。 */
     var PASS_SELECTOR = 'button, a, input, select, textarea, label, [role="button"], [data-row-expander], [data-dsw-expander]'
+    /** DSH 原生「新建会话」控件（侧栏图标按钮 / macOS 折叠态的窗口控件）。 */
+    var NEW_SESSION_SELECTOR = 'button[aria-label="新建会话"], button[aria-label="New session"]'
+    /** 那个按钮在总督模式下的真实语义。 */
+    var PANEL_LABEL = '新建工作面板'
 
     /* ====================================================================== */
     /* 插件内状态（当前工作区 + 待搬运草稿 + 挂载策略）                            */
@@ -388,6 +392,7 @@ window.__ModuleLoader__.load({
       '  transition:background .15s ease,color .15s ease}',
       '.dsh-gov-action:hover{background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary)}',
       '.dsh-gov-action:disabled{color:var(--dsw-alias-label-dimmed);cursor:default;background:var(--dsw-alias-bg-layer-1)}',
+      '.dsh-gov-head .dsh-gov-add{padding:2px 9px;font-size:15px;line-height:1.1;font-weight:600}',
 
       '.dsh-gov-stage{position:relative;flex:1;min-height:96px;display:flex;flex-direction:column;padding:10px 16px 0}',
       '.dsh-gov-wires{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}',
@@ -405,9 +410,6 @@ window.__ModuleLoader__.load({
       '.dsh-gov-face--gov{width:64px;height:64px}',
       '.dsh-gov-face--sub{width:48px;height:48px}',
       '.dsh-gov-node:hover .dsh-gov-face{opacity:.86}',
-      '.dsh-gov-face--add{display:grid;place-items:center;width:48px;height:48px;font-size:20px;',
-      '  border-radius:var(--dsw-radius-sm,8px);background:var(--dsw-alias-bg-layer-1);',
-      '  color:var(--dsw-alias-label-caption);box-shadow:var(--dsw-elevation-stroke)}',
       '.dsh-gov-label{max-width:88px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
       '  font-size:12px;color:var(--dsw-alias-label-tertiary)}',
       '.dsh-gov-branch{max-width:88px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
@@ -650,6 +652,16 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** 新建手下子会话：总督栏右侧加号是唯一入口。 */
+    function addWorkerSession(workspaceId) {
+      if (typeof workspaceId !== 'string' || workspaceId === '') return
+      var ui = serviceOf(currentCtx, 'uiWorkspace')
+      if (ui == null || typeof ui.startSession !== 'function') return
+      try { ui.startSession(workspaceId) } catch (error) {
+        console.debug('[governor-mode] startSession failed:', error)
+      }
+    }
+
     function postBootstrap(sessionId, workspaceId, title, sessions) {
       return apiPost('/bootstrap', {
         session: sessionId,
@@ -697,6 +709,30 @@ window.__ModuleLoader__.load({
         if (ids2.length === 0) continue
         bootstrapWorkspace(ws2)
       }
+    }
+
+    /**
+     * 新建工作面板 = 官方目录选择器 + 官方工作区创建；新工作区由差集轮询自动补总督会话与
+     * 提示词。用户取消选择、官方服务缺席都静默返回，失败只落 console.debug。
+     */
+    function createWorkspacePanel() {
+      var ui = serviceOf(currentCtx, 'uiWorkspace')
+      var workspaces = serviceOf(currentCtx, 'workspaces')
+      if (ui == null || typeof ui.pickDirectory !== 'function') return
+      if (workspaces == null || typeof workspaces.create !== 'function') return
+      var picked
+      try { picked = ui.pickDirectory() } catch (error) { return }
+      if (picked == null || typeof picked.then !== 'function') return
+      picked.then(function (dir) {
+        var path = typeof dir === 'string' ? dir : dir != null ? dir.path : null
+        if (typeof path !== 'string' || path === '') return null
+        return workspaces.create({ path: path })
+      }).then(function (workspace) {
+        if (workspace == null || workspace.workspaceId == null) return
+        setWorkspace(workspace.workspaceId)
+      }).catch(function (error) {
+        console.debug('[governor-mode] create workspace failed:', error)
+      })
     }
 
     /* ====================================================================== */
@@ -1105,37 +1141,6 @@ window.__ModuleLoader__.load({
         )
       })
 
-      if (subIds.length < MAX_SUB) {
-        var addRow = react.createElement(
-          'div',
-          { className: 'dsh-gov-row', key: 'row-add' },
-          react.createElement(
-            'button',
-            {
-              type: 'button',
-              className: 'dsh-gov-node',
-              'data-gov-node': 'add',
-              title: '新建手下会话',
-              onClick: function () {
-                var uiWorkspace = serviceOf(currentCtx, 'uiWorkspace')
-                if (uiWorkspace != null && typeof uiWorkspace.startSession === 'function' && workspace != null) {
-                  try { uiWorkspace.startSession(workspace.workspaceId) } catch (error) { void error }
-                }
-              },
-            },
-            react.createElement('span', { className: 'dsh-gov-face dsh-gov-face--add' }, '+'),
-            react.createElement('span', { className: 'dsh-gov-label' }, '新建手下'),
-          ),
-        )
-        if (grid.length === 0) grid = [addRow]
-        else grid[grid.length - 1] = react.createElement(
-          react.Fragment,
-          { key: 'row-last' },
-          grid[grid.length - 1],
-          addRow,
-        )
-      }
-
       var governorSummary = governorId == null ? null : summaries[governorId]
       var governorState = governorId == null ? 'idle' : statusOf(governorId)
       var showBubble = governorId != null && governorState === 'done' && view.bubbleClosed !== true
@@ -1152,6 +1157,13 @@ window.__ModuleLoader__.load({
           disabled: governorId == null,
           onClick: function () { if (governorId != null) openSession(governorId) },
         }, '总督会话'),
+        react.createElement('button', {
+          type: 'button',
+          className: 'dsh-gov-action dsh-gov-add',
+          disabled: workspace == null || subIds.length >= MAX_SUB,
+          title: '新建手下子会话',
+          onClick: function () { if (workspace != null) addWorkerSession(workspace.workspaceId) },
+        }, '+'),
       )
 
       var stage = react.createElement(
@@ -1370,14 +1382,65 @@ window.__ModuleLoader__.load({
     }
 
     /* ====================================================================== */
-    /* 侧栏拦截：点工作区行 → 打开总督面板（无条件，行内交互控件放行）              */
+    /* 侧栏拦截：新建会话按钮 → 新建工作面板；点工作区行 → 打开总督面板（行内控件放行） */
     /* ====================================================================== */
+
+    /** 命中 DSH 原生新建会话控件（侧栏图标按钮 / macOS 折叠态的窗口控件）。 */
+    function isNewSessionControl(target) {
+      if (target == null || typeof target.closest !== 'function') return false
+      try { return target.closest(NEW_SESSION_SELECTOR) != null } catch (error) { return false }
+    }
+
+    /** 叶子节点文案替换：悬停提示里的「新建会话」→「新建工作面板」。 */
+    function relabel(node) {
+      if (node == null || node.nodeType !== 1) return
+      if (node.children != null && node.children.length > 0) return
+      if (node.textContent != null && node.textContent.trim() === '新建会话') node.textContent = PANEL_LABEL
+    }
+
+    function relabelNewSession(root) {
+      if (root == null || typeof root.querySelectorAll !== 'function') return
+      relabel(root)
+      var hits = []
+      try { hits = root.querySelectorAll('*') } catch (error) { return }
+      for (var i = 0; i < hits.length; i += 1) relabel(hits[i])
+    }
+
+    /**
+     * 悬停提示文案改写。sidebar 命名空间已被官方占用（ctx.locale.register 对同一命名空间
+     * 的同一语言会抛错），只能改文案本身；aria-label 保持官方原样——拦截器靠它定位按钮。
+     */
+    function watchNewSessionLabel() {
+      if (typeof MutationObserver !== 'function' || document.body == null) return function () {}
+      relabelNewSession(document.body)
+      var observer = new MutationObserver(function (records) {
+        for (var i = 0; i < records.length; i += 1) {
+          var added = records[i].addedNodes
+          for (var j = 0; j < added.length; j += 1) {
+            var node = added[j]
+            if (node == null || node.nodeType !== 1) continue
+            if (node.textContent == null || node.textContent.indexOf('新建会话') === -1) continue
+            relabelNewSession(node)
+          }
+        }
+      })
+      observer.observe(document.body, { childList: true, subtree: true })
+      return function () { observer.disconnect() }
+    }
 
     function installSidebarInterceptor() {
       function onClick(event) {
         var target = event.target
         if (target == null || typeof target !== 'object') return
-        // 行内动作（新建会话 / 更多 / 官方展开控件）照旧放行。
+        // DSH 原生「新建会话」＝总督模式下的「新建工作面板」：拦下来，改建一个工作区。
+        if (isNewSessionControl(target) === true) {
+          event.preventDefault()
+          event.stopPropagation()
+          if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation()
+          createWorkspacePanel()
+          return
+        }
+        // 行内动作（更多 / 官方展开控件 / 工作区行内的新建会话）照旧放行。
         if (shouldPass(target) === true) return
         if (typeof target.closest !== 'function') return
         var row = null
@@ -1390,7 +1453,11 @@ window.__ModuleLoader__.load({
         setWorkspace(key.slice('workspace:'.length))
       }
       document.addEventListener('click', onClick, true)
-      return function () { document.removeEventListener('click', onClick, true) }
+      var stopWatching = watchNewSessionLabel()
+      return function () {
+        document.removeEventListener('click', onClick, true)
+        stopWatching()
+      }
     }
 
     /* ====================================================================== */
@@ -1488,7 +1555,8 @@ window.__ModuleLoader__.load({
       state, rowsOf, stateOf, fusedState, titleOf, hashId, faceCells, pixelAvatar,
       measureWires, STYLESHEET, shouldPass, pollDelayMs, targetsOf, branchForSession,
       previewUrlOf, diffNewWorkspaces, ensureGovernor, sendPrompt, deliver,
-      currentStrategy, PASS_SELECTOR, MAX_SUB,
+      currentStrategy, PASS_SELECTOR, MAX_SUB, NEW_SESSION_SELECTOR, isNewSessionControl,
+      addWorkerSession, createWorkspacePanel,
     }
     return module.exports
   },
