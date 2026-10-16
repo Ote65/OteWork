@@ -221,6 +221,8 @@ export async function run(report) {
 
     includes(css, '[class*="_button"][class*="_primary"]', 'outline primary button')
     includes(css, '[class*="_sessionRow"][class*="_selected"]', 'selected row marker')
+    includes(css, 'border-top-left-radius: 0;', 'the marker bar is squared off, not rounded')
+    includes(css, 'inset 2px 0 0 var(--dsh-ote-accent), inset 6px 0 10px -6px rgba(255, 90, 31, 0.5);', 'the bar carries a sharp core plus a soft inner halo')
     includes(css, '[class*="_ioCard"]', 'tool card fill')
     includes(css, '[class*="_triggerLabel"]', 'model/permission chip ellipsis')
     includes(css, 'text-overflow: ellipsis', 'ellipsis is armed')

@@ -352,11 +352,14 @@ window.__ModuleLoader__.load({
 			'  background: transparent;',
 			'}',
 
-			/* §6.4 选中态用左缘 2px 橙竖条；inset 阴影不动盒模型，不碰布局。 */
+			/* §6.4 选中态左缘橙条：2px 锐利主条 + 内渗柔光做层次；inset 阴影不动盒模型。
+			 * 行自带 5px 圆角会把橙条夹圆，所以把左缘两角钉直，右角保持原样。 */
 			'html[' + SKIN_ATTR + '] [class*="_sessionRow"][class*="_selected"],',
 			'html[' + SKIN_ATTR + '] [class*="_projectRow"][class*="_selected"],',
 			'html[' + SKIN_ATTR + '] [class*="_panelRow"][class*="_panelActive"]{',
-			'  box-shadow: inset 2px 0 0 var(--dsh-ote-accent);',
+			'  border-top-left-radius: 0;',
+			'  border-bottom-left-radius: 0;',
+			'  box-shadow: inset 2px 0 0 var(--dsh-ote-accent), inset 6px 0 10px -6px rgba(255, 90, 31, 0.5);',
 			'  transition: box-shadow 0.2s ease;',
 			'}',
 
