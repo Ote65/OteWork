@@ -3,7 +3,7 @@
  *
  *   node tests/run.mjs
  *
- * 三个套件：host（宿主半九条路由）、client（浏览器半总督面板）、prompt（总督提示词）。
+ * 三个套件：host（宿主半十三条路由）、client（浏览器半总督面板）、prompt（总督提示词）。
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
@@ -73,7 +73,7 @@ function report(suite) {
 }
 
 /* ---------------------------------------------------------------------- */
-/* host 套件：宿主半九条路由                                                  */
+/* host 套件：宿主半十三条路由                                                 */
 /* ---------------------------------------------------------------------- */
 
 /** 会话替身：宿主半读到的面（snapshotEvents(from) 半开区间，seq 是下一偏移）。 */
@@ -182,16 +182,16 @@ function askEvents(callId = 'c1') {
 async function runHost(reportFn) {
   const suite = createSuite('host')
 
-  suite.check('registers all nine routes under /api/governor', () => {
+  suite.check('registers all thirteen routes under /api/governor', () => {
     const made = boot()
-    equal(routes.length, 9, 'route count')
+    equal(routes.length, 13, 'route count')
     const paths = routes.map((route) => route.path).join(' ')
-    for (const name of ['/roster', '/transcript', '/questions', '/prompt', '/answer', '/command', '/settings', '/git-state', '/bootstrap']) {
+    for (const name of ['/roster', '/transcript', '/questions', '/prompt', '/answer', '/command', '/settings', '/git-state', '/bootstrap', '/bind', '/takeover', '/report', '/reports']) {
       includes(paths, name, 'route present')
       includes(paths, ROUTE_PREFIX, 'under the governor prefix')
     }
-    // 挂载：九条全部注册到 webServer（plus-menu 同款通路），首选 kind:'exact' 形状。
-    equal(made.ctx.registered.length, 9, 'all routes mounted on the web server')
+    // 挂载：十三条全部注册到 webServer（plus-menu 同款通路），首选 kind:'exact' 形状。
+    equal(made.ctx.registered.length, 13, 'all routes mounted on the web server')
     equal(made.ctx.registered[0].kind, 'exact', 'exact-kind registration shape')
     includes(made.ctx.registered[0].path, '/api/governor/roster', 'mounted path')
   })
@@ -412,6 +412,86 @@ async function runHost(reportFn) {
     equal(prompted.length, 1, 'delivered once')
     includes(prompted[0].text, '阿尔法', 'prompt names the workspace')
     includes(prompted[0].text, 'session-a', 'prompt lists the workers')
+  })
+
+  await suite.checkAsync('bind round-trips through the file and the overlay', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'governor-binds-'))
+    const file = join(dir, 'binds.json')
+    try {
+      boot({}, { bindsPath: file })
+      const missing = await call('/bind', { query: '' })
+      equal(missing.status, 400, 'workspace is required')
+      const empty = await call('/bind', { query: '?workspace=w-bind-1' })
+      equal(empty.body.bind, null, 'unknown workspace has no bind')
+      const post = await call('/bind', {
+        method: 'POST',
+        body: { workspace: 'w-bind-1', governor: 's-gov', workers: ['s-a', 's-gov', 's-b'] },
+      })
+      equal(post.status, 200, 'post status')
+      equal(post.body.bind.governor, 's-gov', 'governor stored')
+      equal(post.body.bind.workers.join(','), 's-a,s-b', 'governor filtered out of workers')
+      const read = await call('/bind', { query: '?workspace=w-bind-1' })
+      equal(read.body.bind.governor, 's-gov', 'read back')
+      const onDisk = JSON.parse(readFileSync(file, 'utf8'))
+      equal(onDisk['w-bind-1'].governor, 's-gov', 'persisted to the binds file')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await suite.checkAsync('takeover caps workers at 8, stops the stale ones, binds and injects', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'governor-takeover-'))
+    const file = join(dir, 'binds.json')
+    try {
+      const stopped = []
+      const prompted = []
+      const sessions = []
+      for (let i = 0; i < 10; i += 1) sessions.push('s-old-' + i)
+      boot({
+        agents: { get: (id) => ({ stop: () => { stopped.push(id) } }) },
+        subagents: { prompt: async (sessionId, text) => { prompted.push({ sessionId, text }) } },
+      }, { bindsPath: file })
+      const missing = await call('/takeover', { method: 'POST', body: { workspace: 'w-t1' } })
+      equal(missing.status, 400, 'workspace and governor are required')
+      const { status, body } = await call('/takeover', {
+        method: 'POST',
+        body: { workspace: 'w-t1', title: '老阿尔法', governor: 's-gov-new', sessions },
+      })
+      equal(status, 200, 'status')
+      equal(body.ok, true, 'ok')
+      equal(body.workers.join(','), 's-old-2,s-old-3,s-old-4,s-old-5,s-old-6,s-old-7,s-old-8,s-old-9', 'keeps the newest 8')
+      equal(stopped.join(','), 's-old-0,s-old-1', 'stops the stale head of the list')
+      equal(body.delivered, true, 'the governor prompt was delivered')
+      const gov = prompted.find((entry) => entry.sessionId === 's-gov-new')
+      assert(gov !== undefined, 'governor got a prompt')
+      includes(gov.text, '老阿尔法', 'governor prompt names the workspace')
+      includes(gov.text, 's-old-9', 'governor prompt lists the workers')
+      equal(prompted.filter((entry) => entry.sessionId !== 's-gov-new').length, 8, 'every worker got the briefing')
+      const brief = prompted.find((entry) => entry.sessionId === 's-old-5')
+      includes(brief.text, '/api/governor/report', 'briefing carries the report curl')
+      includes(brief.text, 's-old-5', 'briefing names its own session')
+      const read = await call('/bind', { query: '?workspace=w-t1' })
+      equal(read.body.bind.governor, 's-gov-new', 'bind written by the takeover')
+      equal(read.body.bind.workers.length, 8, 'workers bound')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await suite.checkAsync('report inbox collects briefings and caps at 50', async () => {
+    boot()
+    const missing = await call('/report', { method: 'POST', body: { workspace: 'w-rep', session: 's-a' } })
+    equal(missing.status, 400, 'workspace, session and text are required')
+    for (let i = 0; i < 52; i += 1) {
+      await call('/report', { method: 'POST', body: { workspace: 'w-rep', session: 's-a', text: '简报' + i } })
+    }
+    const { body } = await call('/reports', { query: '?workspace=w-rep' })
+    equal(body.ok, true, 'ok')
+    equal(body.reports.length, 50, 'capped at 50')
+    equal(body.reports[0].text, '简报2', 'oldest dropped')
+    equal(body.reports[49].text, '简报51', 'newest kept')
+    const empty = await call('/reports', { query: '?workspace=w-rep-none' })
+    equal(empty.body.reports.length, 0, 'unknown workspace reads empty')
   })
 
   suite.check('pure helpers tolerate hostile shapes', () => {
@@ -789,10 +869,11 @@ async function runClient(reportFn) {
     // 工作区行拦截：打开该工作区的总督会话 + 右侧栏总督标签页（一级栏是总督入口）
     const row = { getAttribute: () => 'workspace:w9' }
     bundle.internals.latest.wsSessions = { w9: ['s-gov', 's-a'] }
+    bundle.internals.govBinds.w9 = { governor: 's-gov', workers: ['s-a'] }
     handler(makeEvent({ closest: (selector) => (selector.startsWith('[data-row-key') ? row : null) }))
     equal(prevented.value, true, 'workspace row is intercepted')
     equal(bundle.internals.state.workspaceId, 'w9', 'the workspace is selected')
-    equal(bundle.openCalls.join(','), 's-gov', 'the workspace governor session is opened')
+    equal(bundle.openCalls.join(','), 's-gov', 'the bound governor session is opened')
     equal(bundle.tabOpenCalls.length, 1, 'the governor tab is opened in the right sidebar')
     equal(bundle.tabOpenCalls[0].kind, 'governor', 'opened by kind')
     // 原生新建会话控件按 aria-label 定位（走下一个用例的分支，不落到行点击上）
@@ -1001,6 +1082,13 @@ async function runClient(reportFn) {
     equal(payload.session, 's-gov', 'prompt goes to the first session')
     equal(payload.workspace, 'w-new', 'workspace id')
     equal(payload.sessions.join(','), 's-a', 'workers listed')
+    // 注入成功后绑定持久化到宿主（下次进面板直接认这个总督）
+    const bindPost = calls.find((entry) => entry.url.includes('/api/governor/bind'))
+    assert(bindPost !== undefined, 'bind was posted after bootstrap')
+    const bindBody = JSON.parse(bindPost.init.body)
+    equal(bindBody.governor, 's-gov', 'bind governor')
+    equal(bindBody.workers.join(','), 's-a', 'bind workers')
+    equal(bundle.internals.govBinds['w-new'].governor, 's-gov', 'bind cached immediately')
   })
 
   await suite.checkAsync('autostart off leaves new workspaces untouched', async () => {
@@ -1048,6 +1136,7 @@ async function runClient(reportFn) {
     const registrations = bundle.registrations
     const panel = registrations.find((entry) => entry.registration.name === 'sidebar.right.pane.tab')
     assert(panel !== undefined, 'the panel component is registered as the tab body')
+    bundle.internals.govBinds.w1 = { governor: 's-gov', workers: ['s-a', 's-b'] }
     const element = panel.Component({
       useTabInfo: () => ({ tab: { visible: true } }),
       useWorkspaces: (pick) => pick({ items: [{ workspaceId: 'w1', title: '阿尔法', sessionIds: ['s-gov', 's-a', 's-b'] }] }),
@@ -1084,6 +1173,81 @@ async function runClient(reportFn) {
     equal(preview.props.disabled, true, 'preview is disabled without a url')
   })
 
+  await suite.checkAsync('an old workspace row click takes its sessions over a new governor', async () => {
+    const calls = []
+    const bundle = loadBundle({
+      fetch: (url, init) => {
+        calls.push({ url, init })
+        if (url.includes('/api/governor/takeover')) {
+          return Promise.resolve({ ok: true, json: async () => ({ ok: true, workers: ['s-old-1', 's-old-2'], delivered: true }) })
+        }
+        if (url.includes('/api/governor/bind')) {
+          return Promise.resolve({ ok: true, json: async () => ({ ok: true, bind: null }) })
+        }
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) })
+      },
+    })
+    const { setWorkspace, ensureGovernor, govBinds, pendingTakeover, latest } = bundle.internals
+    latest.wsList = [{ workspaceId: 'w-old', title: '老工作区', sessionIds: ['s-old-1', 's-old-2'] }]
+    latest.wsSessions = { 'w-old': ['s-old-1', 's-old-2'] }
+    setWorkspace('w-old')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    equal(bundle.tabOpenCalls.length, 1, 'the governor tab opens right away')
+    equal(bundle.startCalls.join(','), 'w-old', 'a new governor session is started')
+    equal(pendingTakeover.has('w-old'), true, 'the takeover is pending')
+    equal(bundle.openCalls.length, 0, 'no old session is opened as if it were the governor')
+    // 看护轮询 diff 出新会话 → POST /takeover 收编手下
+    ensureGovernor([{ workspaceId: 'w-old', title: '老工作区', sessionIds: ['s-old-1', 's-old-2', 's-gov-new'] }], true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const takeover = calls.find((entry) => entry.url.includes('/api/governor/takeover'))
+    assert(takeover !== undefined, 'takeover was posted')
+    const payload = JSON.parse(takeover.init.body)
+    equal(payload.workspace, 'w-old', 'workspace id')
+    equal(payload.governor, 's-gov-new', 'the fresh session is the governor')
+    equal(payload.sessions.join(','), 's-old-1,s-old-2', 'the old sessions are handed over')
+    equal(payload.title, '老工作区', 'the workspace title travels')
+    equal(govBinds['w-old'].governor, 's-gov-new', 'the bind is cached')
+    equal(govBinds['w-old'].workers.join(','), 's-old-1,s-old-2', 'the workers are cached')
+    equal(pendingTakeover.has('w-old'), false, 'pending is cleared')
+    equal(bundle.openCalls.includes('s-gov-new'), true, 'the governor session opens')
+    // 再点行：直接开总督会话，不再新建
+    setWorkspace('w-old')
+    equal(bundle.startCalls.length, 1, 'a bound workspace never starts another session')
+    equal(bundle.openCalls.filter((id) => id === 's-gov-new').length, 2, 'the governor opens again directly')
+  })
+
+  suite.check('the panel resolves the governor from the bind, not the first session', () => {
+    const bundle = loadBundle()
+    bundle.internals.govBinds.w1 = { governor: 's-gov', workers: ['s-a', 's-b'] }
+    const panel = bundle.registrations.find((entry) => entry.registration.name === 'sidebar.right.pane.tab')
+    const element = panel.Component({
+      useTabInfo: () => ({ tab: { visible: true } }),
+      useWorkspaces: (pick) => pick({ items: [{ workspaceId: 'w1', title: '阿尔法', sessionIds: ['s-a', 's-gov', 's-b'] }] }),
+      useSessions: (pick) => pick({ byId: {} }),
+      useSessionStatus: (pick) => pick(new Map()),
+    })
+    const texts = textsOf(element).join(' | ')
+    includes(texts, '阿尔法 总督', 'the top node is named workspace + governor')
+    includes(texts, '2 / 8', 'workers come from the bind')
+    equal(bundle.internals.latest.governorId, 's-gov', 'the cached scene names the bound governor')
+  })
+
+  suite.check('an unbound workspace with sessions shows the takeover empty state', () => {
+    const bundle = loadBundle()
+    const panel = bundle.registrations.find((entry) => entry.registration.name === 'sidebar.right.pane.tab')
+    const element = panel.Component({
+      useTabInfo: () => ({ tab: { visible: true } }),
+      useWorkspaces: (pick) => pick({ items: [{ workspaceId: 'w-cold', title: '老贝塔', sessionIds: ['s-a', 's-b'] }] }),
+      useSessions: (pick) => pick({ byId: {} }),
+      useSessionStatus: (pick) => pick(new Map()),
+    })
+    const texts = textsOf(element).join(' | ')
+    includes(texts, '正在接管工作区…', 'the stage waits for the takeover')
+    equal(bundle.internals.latest.governorId, null, 'no session is mistaken for the governor')
+    const govNodes = findByClass(element, 'dsh-gov-node').filter((node) => node.props['data-gov-node'] === 'gov')
+    equal(govNodes.length, 0, 'no governor node without a bind')
+  })
+
   return reportFn(suite)
 }
 
@@ -1114,8 +1278,18 @@ function runPrompt(reportFn) {
     includes(prompt, '/api/governor/settings', 'settings endpoint')
     includes(prompt, '/api/governor/git-state', 'git-state endpoint')
     includes(prompt, '/api/governor/bootstrap', 'bootstrap endpoint')
+    includes(prompt, '/api/governor/report', 'report endpoint')
+    includes(prompt, '/api/governor/reports', 'reports endpoint')
     includes(prompt, '阿尔法', 'workspace title')
     includes(prompt, 's-a、s-b', 'worker sessions listed')
+  })
+
+  suite.check('briefing and pending-queue discipline is spelled out', () => {
+    includes(prompt, '简报', 'the briefing section exists')
+    includes(prompt, '不会唤醒', 'briefings never wake the governor')
+    includes(prompt, '待发区', 'busy workers get queued, not interrupted')
+    includes(prompt, 'running=true', 'the busy signal is named')
+    includes(prompt, '用户明确要求停止', 'only the user may interrupt')
   })
 
   suite.check('the cursor contract is spelled out', () => {

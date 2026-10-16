@@ -1,8 +1,9 @@
 /**
  * dsh-governor-mode —— 宿主半（/api/governor 控制平面）。
  *
- * 给总督会话的 bash curl 用的九条路由：roster / transcript / questions / prompt /
- * answer / command / settings / git-state / bootstrap。全部挂在 DSH web profile
+ * 路由十三条：roster / transcript / questions / prompt / answer / command / settings /
+ * git-state / bootstrap，加插件内部的 bind（总督绑定持久化）/ takeover（老工作区接管）/
+ * report / reports（手下简报收件箱）。全部挂在 DSH web profile
  * 的 webServer 通道上（plus-menu 的 /api/plus-menu/mcp 与 token-hud 的
  * /api/token-hud/usage 同款已验证通路），提示词里的 URL 尽力经
  * connection.authenticatedUrl 折凭据；没有 webServer 载体时保持惰性，
@@ -14,9 +15,9 @@
  * @module dsh-governor-mode
  */
 
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { buildGovernorPrompt } from './prompt.js'
 
 /** 全部路由的前缀。 */
@@ -37,11 +38,23 @@ export const DEFAULT_SETTINGS = { autoAnswer: false, autostart: true }
 /** 提示词里 URL 的默认基址（DSH Web GUI 的环回端口）。 */
 const DEFAULT_BASE_URL = 'http://127.0.0.1:19387'
 
+/** 一个总督最多带 8 个手下（与浏览器半 MAX_SUB、提示词 MAX_WORKERS 一致）。 */
+const MAX_WORKERS = 8
+
+/** 每个工作区的简报收件箱封顶条数（超出丢最旧）。 */
+const MAX_REPORTS = 50
+
 /** 本插件的路由表，供测试直接驱动（照 session-bridge）。 */
 export const routes = []
 
 /** 开关存储：workspace → { autoAnswer, autostart }。内存态，卸载即失效。 */
 const settingsStore = new Map()
+
+/** 总督绑定内存覆盖层：workspace → { governor, workers, updatedAt }（落盘失败仍生效）。 */
+const bindsOverlay = new Map()
+
+/** 手下简报收件箱：workspace → [{ session, text, time }]（内存态，封顶 MAX_REPORTS）。 */
+const reportInbox = new Map()
 
 /**
  * 以 JSON 应答。
@@ -324,6 +337,123 @@ export function settingsFor(workspace) {
 }
 
 /**
+ * 绑定文件路径：config.bindsPath 覆盖（测试用），默认 ~/.dsh/governor-binds.json。
+ * @param config - 插件配置。
+ * @returns 文件绝对路径。
+ */
+function bindsFile(config) {
+  return typeof config.bindsPath === 'string' && config.bindsPath !== ''
+    ? config.bindsPath
+    : join(homedir(), '.dsh', 'governor-binds.json')
+}
+
+/**
+ * 读绑定文件；不存在/坏 JSON 一律回空对象。
+ * @param file - 绑定文件路径。
+ * @returns workspace → bind 的对象。
+ */
+function readBindsFile(file) {
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8'))
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch (error) {
+    return {}
+  }
+}
+
+/**
+ * 读一个工作区的总督绑定：内存覆盖层优先于文件；形状不对视为无绑定。
+ * @param file - 绑定文件路径。
+ * @param workspace - 工作区 id。
+ * @returns `{ governor, workers, updatedAt }` 或 null。
+ */
+function readBind(file, workspace) {
+  const overlay = bindsOverlay.get(workspace)
+  const raw = overlay !== undefined ? overlay : readBindsFile(file)[workspace]
+  if (raw === null || typeof raw !== 'object' || typeof raw.governor !== 'string' || raw.governor === '') return null
+  const workers = Array.isArray(raw.workers)
+    ? raw.workers.filter((id) => typeof id === 'string' && id !== '' && id !== raw.governor).slice(0, MAX_WORKERS)
+    : []
+  return { governor: raw.governor, workers, updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : null }
+}
+
+/**
+ * 写一个工作区的总督绑定：先进内存覆盖层，再尽力落盘（落盘失败静默）。
+ * @param file - 绑定文件路径。
+ * @param workspace - 工作区 id。
+ * @param governor - 总督会话 id。
+ * @param workers - 手下会话 id 列表。
+ * @returns 写入的绑定。
+ */
+function writeBind(file, workspace, governor, workers) {
+  const entry = {
+    governor,
+    workers: workers.filter((id) => id !== governor).slice(0, MAX_WORKERS),
+    updatedAt: new Date().toISOString(),
+  }
+  bindsOverlay.set(workspace, entry)
+  try {
+    const all = readBindsFile(file)
+    all[workspace] = entry
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, JSON.stringify(all, null, 2))
+  } catch (error) { /* 落盘失败：内存覆盖层仍生效 */ }
+  return entry
+}
+
+/**
+ * 防御式停止一个会话：agent/session 上的 stop/kill/abort/close 等候选方法逐一尝试，
+ * 第一个成功的赢；全部失败如实回报，绝不假装停掉了。
+ * @param ctx - 插件上下文。
+ * @param sessionId - 会话 id。
+ * @returns `{ ok, via }` 或 `{ ok: false, error }`。
+ */
+export async function stopSession(ctx, sessionId) {
+  const candidates = []
+  const agents = ctx.get('agents')
+  const agent = agents !== undefined && agents !== null && typeof agents.get === 'function' ? agents.get(sessionId) : undefined
+  if (agent !== undefined && agent !== null) {
+    for (const method of ['stop', 'kill', 'abort', 'cancel', 'interrupt', 'close']) {
+      if (typeof agent[method] === 'function') candidates.push({ via: 'agent.' + method, run: () => agent[method]() })
+    }
+  }
+  const session = liveSession(ctx, sessionId)
+  if (session !== undefined && session !== null) {
+    for (const method of ['stop', 'abort', 'cancel', 'interrupt', 'close']) {
+      if (typeof session[method] === 'function') candidates.push({ via: 'session.' + method, run: () => session[method]() })
+    }
+  }
+  const errors = []
+  for (const candidate of candidates) {
+    try {
+      await candidate.run()
+      return { ok: true, via: candidate.via }
+    } catch (error) {
+      errors.push(candidate.via + ' → ' + String(error && error.message).slice(0, 120))
+    }
+  }
+  if (candidates.length === 0) return { ok: false, error: 'no stop method on agent/session for ' + sessionId }
+  return { ok: false, error: errors.join(' | ') }
+}
+
+/**
+ * 手下简报纪律的一次性注入文本（接管老工作区时逐会话发一份）。
+ * @param base - 已折凭据的 API 基址。
+ * @param workspaceId - 工作区 id。
+ * @param sessionId - 手下会话 id。
+ * @param workspaceTitle - 工作区名。
+ * @returns 提示词文本。
+ */
+export function workerBriefingPrompt(base, workspaceId, sessionId, workspaceTitle) {
+  const url = String(base).replace(/\/+$/, '') + ROUTE_PREFIX + '/report'
+  return [
+    `你是「${workspaceTitle}」工作区的一名手下会话（本插件的简报纪律，一次性告知）。`,
+    '每当用户直接在你这个会话里下达任务、你完成之后，向总督提交一份简报（只是留言进收件箱，不会唤醒总督）：',
+    `curl -X POST "${url}" -H "content-type: application/json" -d '{"workspace":"${workspaceId}","session":"${sessionId}","text":"用户输入了什么＋你做了什么＋结果与判据（100字内）"}'`,
+  ].join('\n')
+}
+
+/**
  * 把一条路由挂上 webServer 通道（plus-menu 的 /api/plus-menu/mcp 与 token-hud
  * 的 /api/token-hud/usage 走的同一条已验证通路）。
  *
@@ -428,6 +558,7 @@ function mountRoutes(ctx, webServer, config, connection) {
   const resolved = {
     base: String(config.baseUrl === undefined || config.baseUrl === '' ? DEFAULT_BASE_URL : config.baseUrl).replace(/\/+$/, ''),
     sessionProjectionDir: config.sessionProjectionDir ?? '',
+    bindsPath: bindsFile(config),
   }
   // 提示词里的 URL 要折进凭据总督会话的 curl 才不吃 401；折不了就原样给。
   try {
@@ -700,6 +831,108 @@ function mountRoutes(ctx, webServer, config, connection) {
     sendJson(res, 200, { ok: true, session: sessionId, length: prompt.length, via: outcome.via })
   })
 
+  /** GET/POST /bind —— 总督绑定：workspace → { governor, workers }，文件持久化。 */
+  route(`${ROUTE_PREFIX}/bind`, ['GET', 'HEAD', 'POST'], async (req, res) => {
+    if (req.method === 'POST') {
+      const body = await readJson(req)
+      const workspace = typeof body.workspace === 'string' ? body.workspace.trim() : ''
+      const governor = typeof body.governor === 'string' ? body.governor.trim() : ''
+      if (workspace === '' || governor === '') {
+        sendJson(res, 400, { ok: false, error: 'workspace and governor are required' })
+        return
+      }
+      const workers = Array.isArray(body.workers)
+        ? body.workers.filter((id) => typeof id === 'string' && id !== '' && id !== governor).slice(0, MAX_WORKERS)
+        : []
+      const entry = writeBind(resolved.bindsPath, workspace, governor, workers)
+      sendJson(res, 200, { ok: true, workspace, bind: entry })
+      return
+    }
+    const params = new URL(req.url, 'http://127.0.0.1').searchParams
+    const workspace = params.get('workspace')
+    if (workspace === null || workspace === '') {
+      sendJson(res, 400, { ok: false, error: 'workspace is required' })
+      return
+    }
+    sendJson(res, 200, { ok: true, workspace, bind: readBind(resolved.bindsPath, workspace) })
+  })
+
+  /**
+   * POST /takeover —— 老工作区接管（原子）：新建的总督会话 + 已有会话收编为手下
+   * （封顶 8，超出的最旧会话逐个防御式停止），写绑定，注入总督提示词，
+   * 并给每个手下一次性注入简报纪律。
+   */
+  servePost(`${ROUTE_PREFIX}/takeover`, async (req, res) => {
+    const body = await readJson(req)
+    const workspace = typeof body.workspace === 'string' ? body.workspace.trim() : ''
+    const governor = typeof body.governor === 'string' ? body.governor.trim() : ''
+    if (workspace === '' || governor === '') {
+      sendJson(res, 400, { ok: false, error: 'workspace and governor are required' })
+      return
+    }
+    const title = typeof body.title === 'string' && body.title !== '' ? body.title : workspace
+    const sessions = (Array.isArray(body.sessions) ? body.sessions : [])
+      .filter((id) => typeof id === 'string' && id !== '' && id !== governor)
+    const workers = sessions.slice(Math.max(0, sessions.length - MAX_WORKERS))
+    const stale = sessions.slice(0, Math.max(0, sessions.length - MAX_WORKERS))
+    const stopped = []
+    for (const id of stale) {
+      const outcome = await stopSession(ctx, id)
+      stopped.push({ session: id, ok: outcome.ok === true, via: outcome.via, error: outcome.error })
+    }
+    writeBind(resolved.bindsPath, workspace, governor, workers)
+    const prompt = buildGovernorPrompt({
+      baseUrl: resolved.base,
+      workspaceId: workspace,
+      workspaceTitle: title,
+      sessions: workers,
+      settings: settingsFor(workspace),
+    })
+    const delivered = await promptSession(ctx, governor, prompt)
+    let briefed = 0
+    for (const id of workers) {
+      const outcome = await promptSession(ctx, id, workerBriefingPrompt(resolved.base, workspace, id, title))
+      if (outcome.ok === true) briefed += 1
+    }
+    sendJson(res, 200, {
+      ok: true,
+      workspace,
+      governor,
+      workers,
+      stopped,
+      delivered: delivered.ok === true,
+      briefed,
+    })
+  })
+
+  /** POST /report —— 手下简报收件箱（不唤醒总督，只留言；每工作区封顶 50）。 */
+  servePost(`${ROUTE_PREFIX}/report`, async (req, res) => {
+    const body = await readJson(req)
+    const workspace = typeof body.workspace === 'string' ? body.workspace.trim() : ''
+    const session = typeof body.session === 'string' ? body.session.trim() : ''
+    const text = typeof body.text === 'string' ? body.text.trim().slice(0, 2000) : ''
+    if (workspace === '' || session === '' || text === '') {
+      sendJson(res, 400, { ok: false, error: 'workspace, session and text are required' })
+      return
+    }
+    const inbox = reportInbox.get(workspace) ?? []
+    inbox.push({ session, text, time: Date.now() })
+    while (inbox.length > MAX_REPORTS) inbox.shift()
+    reportInbox.set(workspace, inbox)
+    sendJson(res, 200, { ok: true, workspace, count: inbox.length })
+  })
+
+  /** GET /reports —— 读某工作区的简报收件箱（总督被用户问起时查阅）。 */
+  serve(`${ROUTE_PREFIX}/reports`, async (req, res) => {
+    const params = new URL(req.url, 'http://127.0.0.1').searchParams
+    const workspace = params.get('workspace')
+    if (workspace === null || workspace === '') {
+      sendJson(res, 400, { ok: false, error: 'workspace is required' })
+      return
+    }
+    sendJson(res, 200, { ok: true, workspace, reports: reportInbox.get(workspace) ?? [] })
+  })
+
   const disposes = []
   for (const entry of routes) {
     const dispose = registerOn(webServer, entry.path, entry.handler)
@@ -777,4 +1010,6 @@ export const __internals = {
   sendJson, readJson, parseIdList, extractText, summariseEvent, pendingQuestion,
   rosterEntry, questionText, questionOptions, answersFromChoice, settingsFor,
   promptSession, registerOn, DEFAULT_SETTINGS, settingsStore, ROUTE_PREFIX,
+  bindsOverlay, readBind, writeBind, stopSession, workerBriefingPrompt,
+  reportInbox, MAX_WORKERS, MAX_REPORTS,
 }

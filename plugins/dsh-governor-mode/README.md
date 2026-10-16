@@ -6,17 +6,22 @@ DSH 的默认且唯一工作模式（总督模式 v2）。总督面板是**官�
 
 ### 浏览器半（lib/client.js）
 
-1. **一级栏工作区行 = 总督入口**：行的文件夹 SVG 换成总督像素头像、名称尾部挂总督徽记（`data-row-key^="workspace:"` 的行，`data-dsh-gov-row` 标记已装饰）；点击该行（捕获阶段）**打开该工作区的总督会话**（无会话则走官方 `uiWorkspace.startSession` 懒建一个），并在右侧栏打开「总督」标签页；行内交互控件（button / a / input / select / textarea / label / `[role="button"]` / 展开 data 属性白名单）照旧放行。官方 renderer 把图标换回来时会被再装饰一遍（幂等，绝不堆叠）。
+1. **一级栏工作区行 = 总督入口**：行的文件夹 SVG 换成总督像素头像、名称尾部挂总督徽记（`data-row-key^="workspace:"` 的行，`data-dsh-gov-row` 标记已装饰）；点击该行（捕获阶段）在右侧栏打开「总督」标签页，并按**绑定状态三分支**解析总督会话：
+   - **已有绑定** → 直接打开绑定的总督会话（绝不把子会话误当总督）；
+   - **老工作区（有会话、无绑定）** → 走**接管流**：官方 `uiWorkspace.startSession` 新建一个会话，看护轮询 diff 出新会话 id 即总督，`POST /takeover` 原子收编——既有会话保留最新 8 个当手下、更旧的超出部分逐个停掉、写绑定、给总督注入提示词、逐手下注入简报纪律；
+   - **零会话** → 懒建总督走 `/bootstrap`。
+
+   行内交互控件（button / a / input / select / textarea / label / `[role="button"]` / 展开 data 属性白名单）照旧放行。官方 renderer 把图标换回来时会被再装饰一遍（幂等，绝不堆叠）。
 2. **原生「新建会话」按钮 = 新建工作面板**：DSH 侧栏那个 `aria-label="新建会话"` 的图标按钮被接管——点击改为走官方目录选择器 + 官方工作区创建（`uiWorkspace.pickDirectory()` → `workspaces.create({path})`），新建的工作区由差集轮询自动补总督会话与提示词。悬停提示里的「新建会话」文案改写为「新建工作面板」（`sidebar` 命名空间已被官方占用，`ctx.locale.register` 会抛错，所以只改文案；`aria-label` 保持原样，拦截器靠它定位）。注：快捷键（非点击）仍走官方行为。
 3. **总督面板，四区内容同一套**：
-   - **roster 区**：总督像素头像 76px（点击打开总督会话）+ ≤8 个手下像素头像 56px（1/2/3/4 居中、5→3+2、6→3+3、7→4+3、8→4+4 排布）+ 状态灯（idle / ongoing 呼吸 / done / warning）+ 直角母线连线（第一行从总督底部走总线再横折入节点，第二行从父节点底边垂直下连，进行中那条叠辉光 + 虚线流动 + 双向数据包）+ 手下分支名小标签（取自 git-state 的 `sub/<名>`）；**新增手下子会话的唯一入口是总督栏右侧的「＋」**（`uiWorkspace.startSession(workspaceId)`，满 8 个置灰）；
+   - **roster 区**：顶部固定总督节点——像素头像 76px、名称＝工作区名 +「总督」（点击打开总督会话）；总督身份以**绑定为唯一真源**，未绑定时面板显示「正在接管工作区…」空态，不把任何子会话当总督 + ≤8 个手下像素头像 56px（1/2/3/4 居中、5→3+2、6→3+3、7→4+3、8→4+4 排布）+ 状态灯（idle / ongoing 呼吸 / done / warning）+ 直角母线连线（第一行从总督底部走总线再横折入节点，第二行从父节点底边垂直下连，进行中那条叠辉光 + 虚线流动 + 双向数据包）+ 手下分支名小标签（取自 git-state 的 `sub/<名>`）；**新增手下子会话的唯一入口是总督栏右侧的「＋」**（`uiWorkspace.startSession(workspaceId)`，满 8 个置灰）；
    - **选择题卡区**：轮询待答问题（问题 + 选项 + 来源手下），点选即代答；头部是 autoAnswer 开关（读写 `/settings`）；
    - **git 区**：dev 同步灯（`devSynced` 橘 / 未同步琥珀 + ahead/behind / 无快照灰）+ 三按钮「同步 GitHub」「汇报」「预览」（预览走导航控制器公开面 `openTab('browser', {params:{url}, revealIfOpened:true})`，git-state 里没有合法 http(s) 地址时置灰）；
    - **输入井**：目标下拉（总督 / 各手下 / 全体）+ 文本 → `POST /api/governor/prompt`；发不出去时降级为 v1 验证过的草稿搬运桥（打开目标会话 + `conversation.input.left` 把文字落进它的输入框）。
-4. **新建工作区 = 新建总督**：轮询 `useWorkspaces` 差集，新工作区无会话则 `uiWorkspace.startSession` 懒建总督会话，会话就位后 `POST /bootstrap` 注入总督提示词（受 `settings.autostart` 控制，默认开）。**用户既有的工作区（已有会话）不打扰**——不建会话也不注入提示词。
+4. **新建工作区 = 新建总督；老工作区 = 点行接管**：轮询 `useWorkspaces` 差集，新工作区无会话则 `uiWorkspace.startSession` 懒建总督会话，会话就位后 `POST /bootstrap` 注入总督提示词并写绑定（受 `settings.autostart` 控制，默认开）。**用户既有的工作区（已有会话）不主动打扰**——不建会话也不注入提示词；只有点击一级行时才触发接管流（见第 1 条）。绑定持久化在宿主 `~/.dsh/governor-binds.json`（`bindsPath` 配置可覆盖），浏览器半内存缓存优先，重启后点行仍能直接打开总督。
 5. **轮询克制**：roster/questions 2s、git-state 10s，页面不可见统一降到 15s；**「总督」标签页不可见时完全不排期**（本地派生——工作区看护、行装饰、现场缓存——由常挂的看护组件照常跑），卸载清干净。
 
-### 宿主半（lib/index.js，`/api/governor` 九路由）
+### 宿主半（lib/index.js，`/api/governor` 十三路由）
 
 | 路由 | 方法 | 作用 |
 | --- | --- | --- |
@@ -29,12 +34,16 @@ DSH 的默认且唯一工作模式（总督模式 v2）。总督面板是**官�
 | `/settings` | GET/PUT | 内存态按 workspace 键；默认 `{autoAnswer:false, autostart:true}`；PUT 校验布尔 |
 | `/git-state?session=` | GET | 纯读会话 cwd 下 `.governor/state.json`，**绝不执行 git** |
 | `/bootstrap` | POST | `{session, workspace, title, sessions}` 生成总督提示词并走 /prompt 同一通路 |
+| `/bind?workspace=` | GET/POST | 读 / 写工作区绑定 `{governor, workers[]}`；workers 过滤掉总督、去重、封顶 8；先写内存 overlay 再尽力落盘 `~/.dsh/governor-binds.json`（失败静默） |
+| `/takeover` | POST | 老工作区接管：`{workspace, governor, sessions}` → 保留最新 8 个为手下、防御式探测停掉更旧的、写绑定、给总督注入提示词、逐手下注入简报纪律；回 `{stopped, delivered, briefed}` |
+| `/report` | POST | 手下简报 `{workspace, session, text}` 进收件箱（每工作区封顶 50 丢最旧）；**绝不走 /prompt，不唤醒总督 Agent** |
+| `/reports?workspace=` | GET | 总督按需读简报收件箱（用户提问时才查） |
 
 路由挂 `connection.fetch.register`（多形状防御），URL 由 `authenticatedUrl` 折凭据；没有 connection 载体时惰性不注册。
 
 ### 总督提示词（lib/prompt.js）
 
-`buildGovernorPrompt({baseUrl, workspaceId, workspaceTitle, sessions, settings})` 纯函数（实测渲染 5032 字符）：身份声明 + 九路由 curl 手册 + 游标契约 + 选择题规则（autoAnswer 开 = 总督按推理选最佳并说明理由，主观题仍问用户；关 = 全部汇报用户）+ git 纪律（release 仅用户 / dev 总督+用户 / 手下各在 `sub/<名>` 分支、收口后写 `.governor/state.json`、同步 GitHub 只归总督）+ 监控职责（验收看 diff 不听「做完了」）+ 汇报口径与四类风险。
+`buildGovernorPrompt({baseUrl, workspaceId, workspaceTitle, sessions, settings})` 纯函数：身份声明 + 控制平面 curl 手册 + 游标契约 + 选择题规则（autoAnswer 开 = 总督按推理选最佳并说明理由，主观题仍问用户；关 = 全部汇报用户）+ git 纪律（release 仅用户 / dev 总督+用户 / 手下各在 `sub/<名>` 分支、收口后写 `.governor/state.json`、同步 GitHub 只归总督）+ 监控职责（验收看 diff 不听「做完了」）+ 汇报口径与四类风险 + **手下简报与待发区纪律（第十二节）**：简报只是留言、不会唤醒总督，用户提问时总督先 `GET /reports` 读全部简报再按需逐个查 transcript；手下 `running=true` 时不许中断，派单经 `POST /prompt` 由 DSH 原生「待发区」排队，只有用户明确要求停止时才停。下放模板末尾同步要求手下完成任务后 `POST /report` 交简报。
 
 ## 面板挂载：官方右侧栏的「总督」标签页
 
@@ -104,7 +113,7 @@ New-Item -ItemType Junction `
 node tests/run.mjs
 ```
 
-离线自测，不需要运行中的 DSH：宿主九路由（参数校验 / 501 降级 / 游标契约 / questions 提取 / settings 读写）、客户端（官方标签页两阶段注册 / 点行开总督标签 / 常挂看护的现场缓存与懒建 / 标签服务缺席静默降级 / 一级栏行装饰与点行开会话 / 拦截判定 / 排布与第二行父映射 / 状态映射 / 降频 / 懒建与 bootstrap / 降级草稿桥 / 四区渲染 / 像素网格与设计稿配色光流）、提示词自包含性。
+离线自测，不需要运行中的 DSH：宿主十三路由（参数校验 / 501 降级 / 游标契约 / questions 提取 / settings 读写 / bind 落盘回读 / takeover 收编与停旧 / report 收件箱封顶）、客户端（官方标签页两阶段注册 / 点行绑定优先开总督 / 老工作区接管全流程 / 常挂看护的现场缓存与懒建 / 标签服务缺席静默降级 / 一级栏行装饰与点行开会话 / 拦截判定 / 排布与第二行父映射 / 状态映射 / 降频 / 懒建与 bootstrap 写绑定 / 降级草稿桥 / 四区渲染 / 未绑定空态 / 像素网格与设计稿配色光流）、提示词自包含性（含简报与待发区纪律）。
 
 ## 还原
 
@@ -134,3 +143,6 @@ node -e "const fs=require('fs');const p=process.env.USERPROFILE+'/.dsh/local-plu
 - 「预览」按钮只在 git-state 快照里出现 `previewUrl` / `preview`（合法 http(s)）字段时可用——总督提示词的 state.json schema 未约定该字段，需要时在提示词里补约定。
 - 选择题卡作答是乐观更新：代答失败会还原卡片，以 2s 后的下一轮轮询为准。
 - 手下上限 8：达到上限后总督栏的「＋」置灰。
+- 接管时「保留最新 8 个手下」依赖 `workspace.sessionIds` 旧→新有序的假设（与懒建时 `ids[0]` 最先建的语义一致）；若宿主顺序语义变化，takeover 的保留集合会不同。
+- 手下简报是**提示词纪律**（下放模板与接管注入都要求完成后 `POST /report`），不是宿主强制——手下 Agent 不遵守就没有简报，总督仍可靠 transcript 轮询掌握在途工作。
+- 停旧会话是防御式探测（agent / session 上的 stop / kill / abort / cancel / interrupt / close 逐一尝试），宿主方法名全不命中时如实回报 `stopped` 为空，takeover 其余步骤不受影响。

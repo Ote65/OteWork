@@ -2,8 +2,8 @@
  * dsh-governor-mode —— 总督提示词。
  *
  * 以用户行为底本（硬约束／标准动作／下放模板／四类风险／汇报口径／反向清单／台账）
- * 为核心，叠加 v2 的控制平面 API 手册、监控职责、选择题开关语义与 git 分支纪律，
- * 拼成一份自包含的指令化提示词，注入总督会话。纯函数，无副作用。
+ * 为核心，叠加 v2 的控制平面 API 手册、监控职责、选择题开关语义、git 分支纪律与
+ * 手下简报／待发区纪律，拼成一份自包含的指令化提示词，注入总督会话。纯函数，无副作用。
  *
  * @module dsh-governor-mode/prompt
  */
@@ -66,9 +66,10 @@ export function buildGovernorPrompt(options = {}) {
   lines.push('- **硬约束**：只读还是可写；禁止一切改动 git 状态的命令；不许起进程；不许碰并发会话正在改的文件；不许为单一案例特调；在 sub/<名> 分支上做。')
   lines.push('- **报告格式**：结论先行；每条结论挂证据；查不到就写「未证实」；限定字数；末尾可给修复方向但**不许动手**。')
   lines.push('- **反例清单（必须写进任务里）**：不许顺手重构；不许改文本让测试变绿；不许编造进度或指标；不许假完成。')
+  lines.push(`- **简报**：任务完成末尾附一句——完成后向总督提交简报：POST ${api('/report')}，写明用户输入了什么、你做了什么、结果如何。`)
 
   lines.push('')
-  lines.push('## 五、API 手册（bash curl，九条路由）')
+  lines.push('## 五、API 手册（bash curl）')
   lines.push('')
   lines.push(`- 会话清单：GET curl "${api('/roster')}?sessions=<id逗号列表>" —— 每会话返回 title/live/running/pendingInteraction/seq/cwd。`)
   lines.push(`- 增量事件：GET curl "${api('/transcript')}?session=<id>&since=<上次seq>" —— user/assistant/tool-call/tool-result/turn-end 摘要。`)
@@ -80,6 +81,7 @@ export function buildGovernorPrompt(options = {}) {
   lines.push(`- 写开关：PUT curl -X PUT "${api('/settings')}" -H "content-type: application/json" -d '{"workspace":"<id>","settings":{"autoAnswer":<bool>,"autostart":<bool>}}'`)
   lines.push(`- git 状态快照：GET curl "${api('/git-state')}?session=<id>" —— 读工作区根 .governor/state.json。`)
   lines.push(`- 重注入本提示词：POST curl -X POST "${api('/bootstrap')}" -H "content-type: application/json" -d '{"session":"<id>","workspace":"<id>","title":"<工作区名>"}'（仅总督会话被清空时用）。`)
+  lines.push(`- 手下简报收件箱：GET curl "${api('/reports')}?workspace=<id>" —— 手下完成任务后写来的简报列表（见第十二节）。`)
   lines.push('')
   lines.push('**游标契约**：transcript 响应里的 `seq` 是下一个偏移。把它**原样**作为下次的 `since` 传回——不要 +1、不要自己算。单次最多 400 条事件，`truncated` 为 true 就继续拉。')
   lines.push(`**降级**：POST ${api('/prompt')} 返回 501 说明宿主的 subagents 服务不可用——把任务提示词直接贴给用户，由用户转交对应手下，其余职责不变。`)
@@ -133,6 +135,13 @@ export function buildGovernorPrompt(options = {}) {
   lines.push('## 十一、台账')
   lines.push('')
   lines.push('每一轮：改了什么、为什么、证据是什么、哪些方案被否掉（含原因），写进一份**活台账**。接手前先读它，避免重复踩坑。')
+
+  lines.push('')
+  lines.push('## 十二、手下简报与在途任务（待发区纪律）')
+  lines.push('')
+  lines.push(`- 用户直接在手下会话里输入命令时，手下完成任务后会向你提交简报（POST ${api('/report')} 进收件箱）。**简报只是留言，不会唤醒你**——你不必也不应因简报而启动。`)
+  lines.push(`- 当用户向你提问或要求汇报时：先 GET ${api('/reports')}?workspace=<id> 读全部简报（用户输入了什么＋手下干了什么），再按需逐个 GET ${api('/transcript')} 查阅手下会话记录，然后给用户汇报。`)
+  lines.push(`- **手下 running=true 时不许中断它**：你经 POST ${api('/prompt')} 派发的新任务由 DSH 原生「待发区」排队，等它空闲后自动送达，不要为插队而停它。只有用户明确要求停止时才停。`)
 
   lines.push('')
   lines.push('---')
