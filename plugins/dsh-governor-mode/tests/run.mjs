@@ -705,19 +705,23 @@ async function runClient(reportFn) {
     equal(bundle.internals.state.workspaceId, 'w-new-panel', 'the new panel becomes the selected workspace')
   })
 
-  suite.check('avatar seeds are stable and faces are generated', () => {
+  suite.check('avatar seeds are stable and pixel faces are generated', () => {
     const internals = I()
     equal(internals.hashId('session-a'), internals.hashId('session-a'), 'same id same face')
     assert(internals.hashId('session-a') !== internals.hashId('session-b'), 'different ids differ')
-    const gov = internals.faceCells('gov', 42)
-    const sub = internals.faceCells('sub', 42)
+    const gov = internals.pixelGrid('gov', 42)
+    const sub = internals.pixelGrid('sub', 42)
     equal(gov.length, 12, 'grid height')
     equal(gov[0].length, 12, 'grid width')
-    const flat = gov.flat().filter(Boolean)
-    assert(flat.includes('accent'), 'governor has an antenna accent')
-    assert(sub.flat().filter(Boolean).length > 0, 'worker face is generated')
+    assert(gov.join('').includes('O'), 'governor wears an orange badge')
+    assert(gov === internals.PIXEL_GOVERNOR, 'governor grid is fixed')
+    equal(internals.PIXEL_WORKERS.length, 16, 'sixteen hand-drawn workers')
+    assert(sub === internals.PIXEL_WORKERS[internals.hashId(42) % 16], 'worker grid is seeded')
+    equal(sub.length, 12, 'worker grid height')
+    equal(internals.PIXEL_PALETTE.O, '#ff5500', 'design-draft orange')
     const svg = internals.pixelAvatar('gov', 42)
     equal(svg.type, 'svg', 'avatar is an svg')
+    equal(svg.props.viewBox, '0 0 12 12', 'pixel viewbox')
     assert(svg.props.children.length > 40, 'avatar has pixels')
   })
 
@@ -779,12 +783,33 @@ async function runClient(reportFn) {
     equal(internals.previewUrlOf(null), null, 'null state')
   })
 
-  suite.check('stylesheet uses only --dsw-* tokens, no raw colours', () => {
+  suite.check('stylesheet carries the design draft palette and motion', () => {
     const internals = I()
-    assert(/#[0-9a-fA-F]{3,8}\b/.test(internals.STYLESHEET) === false, 'no hex colours')
-    assert(/rgb\(|rgba\(/.test(internals.STYLESHEET) === false, 'no rgb literals')
-    includes(internals.STYLESHEET, '--dsw-alias-bg-layer-2', 'semantic tokens in use')
+    includes(internals.STYLESHEET, 'background:#101614', 'matte panel base')
+    includes(internals.STYLESHEET, 'background:#0b100e', 'card base')
+    includes(internals.STYLESHEET, 'border:1px solid #23342b', 'hairline border')
+    includes(internals.STYLESHEET, 'color:#e2e8e5', 'body text')
+    includes(internals.STYLESHEET, '#ff5500', 'orange accent')
+    includes(internals.STYLESHEET, '#ff7700', 'amber warning')
+    includes(internals.STYLESHEET, '@keyframes dsh-gov-breathe', 'ongoing breathing glow')
+    includes(internals.STYLESHEET, '@keyframes dsh-gov-flow', 'wire packet flow')
+    includes(internals.STYLESHEET, 'stroke-dasharray:6 14', 'dashed flow line')
+    includes(internals.STYLESHEET, 'prefers-reduced-motion', 'motion respects user preference')
+    equal(/dsh-gov-tap/.test(internals.STYLESHEET), false, 'dead demo controls removed')
     equal(internals.MAX_SUB, 8, 'worker cap')
+  })
+
+  suite.check('second row parents map back to the first row', () => {
+    const internals = I()
+    equal(JSON.stringify(internals.layoutOf(0)), JSON.stringify({ row1: [], row2: [], parentMap: {} }), 'zero')
+    equal(JSON.stringify(internals.layoutOf(3).parentMap), '{}', 'single row has no parents')
+    const five = internals.layoutOf(5)
+    equal(JSON.stringify(five.row1), '[0,1,2]', 'five: first row of three')
+    equal(JSON.stringify(five.row2), '[3,4]', 'five: second row of two')
+    equal(JSON.stringify(five.parentMap), '{"3":0,"4":2}', 'five: second row spans the ends')
+    const eight = internals.layoutOf(8)
+    equal(JSON.stringify(eight.parentMap), '{"4":0,"5":1,"6":2,"7":3}', 'eight: aligned column parents')
+    equal(internals.layoutOf(99).row1.length, 4, 'capped at MAX_SUB')
   })
 
   await suite.checkAsync('new workspaces are lazily seeded and bootstrapped', async () => {

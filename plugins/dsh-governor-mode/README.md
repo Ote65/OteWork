@@ -1,6 +1,6 @@
 # dsh-governor-mode
 
-DSH 的默认且唯一工作模式（总督模式 v2）。总督面板挂在右侧（与内置浏览器 / 文档预览并列），宿主半提供 `/api/governor` 控制平面，总督会话用 bash curl 驱动整个工作区。全部沿用宿主自己的设计体系，不引入任何自造配色与皮肤。
+DSH 的默认且唯一工作模式（总督模式 v2）。总督面板挂在右侧边栏（与内置浏览器 / 文档预览并列、自适应栏宽，不锁比例），宿主半提供 `/api/governor` 控制平面，总督会话用 bash curl 驱动整个工作区。面板视觉照搬总督面板设计稿：工业哑光黑绿底 + 橘高亮、12×12 手绘像素人、直角连线与数据光流。
 
 ## 它做了什么
 
@@ -9,9 +9,9 @@ DSH 的默认且唯一工作模式（总督模式 v2）。总督面板挂在右�
 1. **侧栏拦截（无条件）**：工作区行的点击（捕获阶段，`[data-row-key^="workspace:"]`）改为打开总督面板，**不展开**会话列表；行内交互控件（button / a / input / select / textarea / label / `[role="button"]` / 展开 data 属性白名单）照旧放行。
 2. **原生「新建会话」按钮 = 新建工作面板**：DSH 侧栏那个 `aria-label="新建会话"` 的图标按钮被接管——点击改为走官方目录选择器 + 官方工作区创建（`uiWorkspace.pickDirectory()` → `workspaces.create({path})`），新建的工作区由差集轮询自动补总督会话与提示词。悬停提示里的「新建会话」文案改写为「新建工作面板」（`sidebar` 命名空间已被官方占用，`ctx.locale.register` 会抛错，所以只改文案；`aria-label` 保持原样，拦截器靠它定位）。注：快捷键（非点击）仍走官方行为。
 3. **总督面板，四区内容同一套**：
-   - **roster 区**：总督头像 64px（点击打开总督会话）+ ≤8 个手下头像 48px（1/2/3/4 居中、5→3+2、6→3+3、7→4+3、8→4+4 排布）+ 状态灯（idle / ongoing 呼吸 / done / warning）+ 直角母线连线 + 手下分支名小标签（取自 git-state 的 `sub/<名>`）；**新增手下子会话的唯一入口是总督栏右侧的「＋」**（`uiWorkspace.startSession(workspaceId)`，满 8 个置灰）；
+   - **roster 区**：总督像素头像 76px（点击打开总督会话）+ ≤8 个手下像素头像 56px（1/2/3/4 居中、5→3+2、6→3+3、7→4+3、8→4+4 排布）+ 状态灯（idle / ongoing 呼吸 / done / warning）+ 直角母线连线（第一行从总督底部走总线再横折入节点，第二行从父节点底边垂直下连，进行中那条叠辉光 + 虚线流动 + 双向数据包）+ 手下分支名小标签（取自 git-state 的 `sub/<名>`）；**新增手下子会话的唯一入口是总督栏右侧的「＋」**（`uiWorkspace.startSession(workspaceId)`，满 8 个置灰）；
    - **选择题卡区**：轮询待答问题（问题 + 选项 + 来源手下），点选即代答；头部是 autoAnswer 开关（读写 `/settings`）；
-   - **git 区**：dev 同步灯（`devSynced` 绿 / 否则橙 + ahead/behind / 无快照灰）+ 三按钮「同步 GitHub」「汇报」「预览」（预览走 `ctx.sidebarRight.openTabIn(sessionId, 'browser', {params:{url}})`，git-state 里没有合法 http(s) 地址时置灰）；
+   - **git 区**：dev 同步灯（`devSynced` 橘 / 未同步琥珀 + ahead/behind / 无快照灰）+ 三按钮「同步 GitHub」「汇报」「预览」（预览走 `ctx.sidebarRight.openTabIn(sessionId, 'browser', {params:{url}})`，git-state 里没有合法 http(s) 地址时置灰）；
    - **输入井**：目标下拉（总督 / 各手下 / 全体）+ 文本 → `POST /api/governor/prompt`；发不出去时降级为 v1 验证过的草稿搬运桥（打开目标会话 + `conversation.input.left` 把文字落进它的输入框）。
 4. **新建工作区 = 新建总督**：轮询 `useWorkspaces` 差集，新工作区无会话则 `uiWorkspace.startSession` 懒建总督会话，会话就位后 `POST /bootstrap` 注入总督提示词（受 `settings.autostart` 控制，默认开）。**用户既有的工作区（已有会话）不打扰**——不建会话也不注入提示词。
 5. **轮询克制**：roster/questions 2s、git-state 10s，页面不可见统一降到 15s，卸载清干净。
@@ -48,29 +48,33 @@ DSH 的默认且唯一工作模式（总督模式 v2）。总督面板挂在右�
 
 > **实测结论（待 Windows 验证后补）**：装好插件后开 DevTools 看 `document.documentElement.getAttribute('data-dsh-governor-mount')`——值为 `pane` / `slot:…` / `main`，即实际命中的策略；若面板不可见但值为 `slot:…`，说明候选槽名不存在（策略二静默挂上了但宿主不渲染），回报后调整候选表或直接走 main 兜底。
 
-## 像素头像的边界
+## 像素头像
 
-像素头像是**总督面板专属**的视觉语言：只在面板里的总督 / 手下节点上渲染，由 16×16 像素网格（像素相框 + 12×12 像素脸）程序化生成，种子取自会话 id，所以同一个会话每次都是同一张脸。
+像素头像是**总督面板专属**的视觉语言：只在面板里的总督 / 手下节点上渲染。每张脸是 12×12 字符网格逐格描 `rect` 出来的（`shapeRendering: crispEdges`）——总督固定为军官帽 + 橘徽章那一套，手下是设计稿的 16 套手绘像素人（耳机 / 毛线帽 / 圆眼镜 / 棒球帽 / 赛博面罩 / 爆炸头 / 发髻 …），按 `hashId(会话 id) % 16` 取，所以同一个会话每次都是同一张脸。
 
 它**不碰任何官方原生头像与图标**：侧栏、品牌席位、会话列表、顶栏等官方组件一个字节都没改，官方插槽也没有被禁用。
 
-像素里的每个色块都翻译成宿主令牌，因此深浅色主题都会跟着走：
+调色板就是设计稿那 8 个色（写在 `PIXEL_PALETTE`，不再走宿主令牌）：
 
-| 部位 | 令牌 |
-| --- | --- |
-| 相框（受光 / 压暗） | `--dsw-alias-border-l3` / `--dsw-alias-border-l4` |
-| 凹口底 | `--dsw-alias-bg-base` |
-| 面部（上 / 下） | `--dsw-alias-bg-layer-2` / `--dsw-alias-bg-layer-1` |
-| 轮廓线 | `--dsw-alias-border-l3` |
-| 眼睛 | `--dsw-alias-label-primary` |
-| 天线 / 视窗 / 颊灯 | `currentColor` → 由节点状态决定 `--dsw-alias-state-{idle,ongoing,done,warn}-primary` |
+| 键 | 色值 | 用途 |
+| --- | --- | --- |
+| `B` | `#090e0c` | 帽檐 / 轮廓（最深） |
+| `D` | `#1b2622` | 阴影 / 衣着 |
+| `G` | `#2f423a` | 中间灰绿 |
+| `S` | `#dce4e0` | 面部 / 高光 |
+| `O` | `#ff5500` | 橘（徽章、帽带） |
+| `Y` | `#ff7700` | 琥珀（次要高光） |
+| `W` | `#ffffff` | 纯白（眼白 / 数据包） |
 
 ## 设计纪律（为什么长这样）
 
-- 颜色一律取 `--dsw-*` 语义令牌（`bg-layer-1/2/3` 分层的阶差、`label-*` 四级文字、`border-l1~l4`、`elevation-*`），**没有自造色值**（测试断言 STYLESHEET 不含 hex / rgb 字面量）。
-- 不加大投影、不加发光；「进行中」用 `--dsw-alias-state-business-primary` + 透明度呼吸表达。
-- 面板与气泡沿用宿主材质（`--dsw-specific-menu` + `backdrop-filter: var(--dsw-menu-backdrop-filter)` + `data-menu-material`）。
-- 头像尺寸取 16 的整数倍（总督 64 / 手下 48），像素整数倍放大不糊。
+- **视觉照搬用户给的总督面板设计稿**：面板底 `#101614`、卡片底 `#0b100e`、描边 `#1c2822 / #23342b`、正文 `#e2e8e5`、次级 `#9bb0a6`、弱化 `#7d8f87`，强调一律橘 `#ff5500` / 琥珀 `#ff7700`。这套色值**刻意不走 `--dsw-*` 令牌**（用户 2026-10-16 拍板破例），所以深浅色主题下外观恒定。
+- 节点状态用**橘底边 + 呼吸光晕**表达：`ongoing` 底边橘 + `dsh-gov-breathe` 呼吸、`done` 底边橘 + 静态橘投影、`warning` 底边琥珀。
+- 连线三段：静态母线 `#1b2822`；进行中叠一层 `feGaussianBlur` 辉光线 + 白色 `stroke-dasharray:6 14` 流动虚线（`dsh-gov-flow`）+ 一白一橘两个方块沿同一条路径反向 `animateMotion`。
+- 尊重 `prefers-reduced-motion`：该模式下关掉呼吸与流动动画。
+- 面板宽高全部自适应右侧栏容器（`width/height:100%` + `clamp()` 间距、`flex:1` 舞台），**不锁 16:9**。
+- 设计稿底部的 1–8 数量圆点 / 自动模拟 / 洗牌 / standby 是纯 demo 控件，**没有移植**（保留会变成死按钮）；面板里保留的是真实功能区：选择题卡 / git 三按钮 / 输入井。
+- 头像尺寸取 12 的整数倍（总督 76 / 手下 56），像素整数倍放大不糊。
 
 ## 安装
 
@@ -98,7 +102,7 @@ New-Item -ItemType Junction `
 node tests/run.mjs
 ```
 
-离线自测，不需要运行中的 DSH：宿主九路由（参数校验 / 501 降级 / 游标契约 / questions 提取 / settings 读写）、客户端（挂载三策略 / 拦截判定 / 排布 / 状态映射 / 降频 / 懒建与 bootstrap / 降级草稿桥 / 四区渲染）、提示词自包含性。
+离线自测，不需要运行中的 DSH：宿主九路由（参数校验 / 501 降级 / 游标契约 / questions 提取 / settings 读写）、客户端（挂载三策略 / 拦截判定 / 排布与第二行父映射 / 状态映射 / 降频 / 懒建与 bootstrap / 降级草稿桥 / 四区渲染 / 像素网格与设计稿配色光流）、提示词自包含性。
 
 ## 还原
 
@@ -126,4 +130,4 @@ node -e "const fs=require('fs');const p=process.env.USERPROFILE+'/.dsh/local-plu
 - 手下分支小标签是启发式匹配（git-state `workers` 的 `sub/<名>` 对会话标题），匹配不上不显示。
 - 「预览」按钮只在 git-state 快照里出现 `previewUrl` / `preview`（合法 http(s)）字段时可用——总督提示词的 state.json schema 未约定该字段，需要时在提示词里补约定。
 - 选择题卡作答是乐观更新：代答失败会还原卡片，以 2s 后的下一轮轮询为准。
-- 手下上限 8：达到上限后不再显示「新建手下」。
+- 手下上限 8：达到上限后总督栏的「＋」置灰。

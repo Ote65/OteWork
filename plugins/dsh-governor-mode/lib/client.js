@@ -10,7 +10,7 @@
  *  4. 数据走宿主半 /api/governor/*（相对路径 fetch，同源），roster/questions 2s、
  *     git-state 10s，页面不可见统一降到 15s；新建工作区 = 懒建总督 + 注入提示词。
  *
- * 颜色 / 圆角 / 阴影一律取 --dsw-* 语义令牌：不自造色值、不加大投影、不用发光。
+ * 视觉沿用总督面板设计稿：工业哑光黑绿底 + 橘高亮、12×12 手绘像素人、直角连线与数据光流。
  * 像素头像只出现在总督面板内，官方侧栏与品牌席位的原生头像/图标一个都不动。
  *
  * @module dsh-governor-mode/client
@@ -208,21 +208,264 @@ window.__ModuleLoader__.load({
     function apiPut(path, body) { return apiFetch(path, { method: 'PUT', body: body }) }
 
     /* ====================================================================== */
-    /* 像素头像：16×16 网格 = 像素相框 + 12×12 像素脸                            */
-    /* 只用于总督面板；每个角色落到 SVG 时翻译成 --dsw-* 令牌或 currentColor       */
+    /* 像素头像：12×12 手绘像素人（总督 1 套 + 手下 16 套，照设计稿）              */
+    /* 只用于总督面板；手下按会话 id 稳定取脸，同一个会话每次都是同一个人            */
     /* ====================================================================== */
 
-    var PX = {
-      ring: 'var(--dsw-alias-border-l3)',
-      ringIn: 'var(--dsw-alias-border-l4)',
-      socket: 'var(--dsw-alias-bg-base)',
-      headHi: 'var(--dsw-alias-bg-layer-2)',
-      headLo: 'var(--dsw-alias-bg-layer-1)',
-      edge: 'var(--dsw-alias-border-l3)',
-      eye: 'var(--dsw-alias-label-primary)',
-      /** 天线 / 视窗 / 脸颊灯：跟随节点的语义状态色（由 CSS 的 color 决定）。 */
-      accent: 'currentColor',
+    /** 设计稿调色板：工业哑光黑绿底 + 橘 / 琥珀高亮。 */
+    var PIXEL_PALETTE = {
+      B: '#090e0c',
+      D: '#1b2622',
+      G: '#2f423a',
+      S: '#dce4e0',
+      O: '#ff5500',
+      Y: '#ff7700',
+      W: '#ffffff',
     }
+
+    /** 总督：军官帽 + 橘徽章。 */
+    var PIXEL_GOVERNOR = [
+      '    BBBB    ',
+      '   BBBBBB   ',
+      '  OOOOOOOO  ',
+      '  BBBBBBBB  ',
+      '   SSSSSS   ',
+      '  S B  B S  ',
+      '  S O  O S  ',
+      '   SSSSSS   ',
+      '   SGGGS    ',
+      '    SSSS    ',
+      '   DDDDDD   ',
+      '  DOODDOOD  ',
+    ]
+
+    /** 16 套手下像素人：耳机 / 毛线帽 / 圆眼镜 / 棒球帽 / 赛博面罩 / 爆炸头 / 发髻 … */
+    var PIXEL_WORKERS = [
+      [
+        '   DDDDDD   ',
+        '  DDDDDDDD  ',
+        '  DDDDDDDD  ',
+        ' O SSSSSS O ',
+        ' O B W  B O ',
+        ' O SSSSSS O ',
+        ' O SSSSS O  ',
+        '   SSSSSS   ',
+        '    SSSS    ',
+        '   BBBBBB   ',
+        '  DDDDDDDD  ',
+        '  DDDDDDDD  ',
+      ],
+      [
+        '    OOOO    ',
+        '   OOOOOO   ',
+        '  OOOOOOOO  ',
+        '  YYYYYYYY  ',
+        '   SSSSSS   ',
+        '  D B  B D  ',
+        '  S W  W S  ',
+        '   SSSSSS   ',
+        '    SSSS    ',
+        '   DDDDDD   ',
+        '  DDDDDDDD  ',
+        '  DDDDDDDD  ',
+      ],
+      [
+        '   BBBBBB   ',
+        '  BBBBBBBB  ',
+        '  BBBBBBBB  ',
+        '   SSSSSS   ',
+        '  BOBBBOBD  ',
+        '  SOWSSOWS  ',
+        '   SSSSSS   ',
+        '    SSSS    ',
+        '   DDDDDD   ',
+        '  DDDWWDDD  ',
+        '  DDDWWDDD  ',
+        '  DDDDDDDD  ',
+      ],
+      [
+        '   DDDDDD   ',
+        '  DDDDDDDD  ',
+        '  OOOOOOOOO ',
+        '   SSSSSS   ',
+        '  S B  B S  ',
+        '  S O  O S  ',
+        '   SSSSSS   ',
+        '    SSSS    ',
+        '   GGGGGG   ',
+        '  GGGGGGGG  ',
+        '  GGGGGGGG  ',
+        '  GGGGGGGG  ',
+      ],
+      [
+        '   BBBBBB   ',
+        '  BBBBBBBB  ',
+        '  BBBBBBBB  ',
+        '   SSSSSS   ',
+        '  OOOOOOOO  ',
+        '  YYYYYYYY  ',
+        '   SSSSSS   ',
+        '    SSSS    ',
+        '   DDDDDD   ',
+        '  DDOGGODD  ',
+        '  DDOGGODD  ',
+        '  DDDDDDDD  ',
+      ],
+      [
+        '  BBBBBBBB  ',
+        ' BBBBBBBBBB ',
+        ' BBBBBBBBBB ',
+        ' BB SSSS BB ',
+        ' B S B  B S ',
+        ' B S W  W S ',
+        ' BB SSSS BB ',
+        '   SSSSSS   ',
+        '    SSSS    ',
+        '   OOOOOO   ',
+        '  DDDDDDDD  ',
+        '  DDDDDDDD  ',
+      ],
+      [
+        '     BB     ',
+        '    BBBB    ',
+        '   BBBBBB   ',
+        '  BBBBBBBB  ',
+        '   SSSSSS   ',
+        '  D B  B D  ',
+        '  S W  W S  ',
+        '   SSSSSS   ',
+        '    SSSS    ',
+        '   DDDDDD   ',
+        '  DDOOODDD  ',
+        '  DDDDDDDD  ',
+      ],
+      [
+        '   DDDDDD   ',
+        '  DDDDDDDD  ',
+        '  DDDDDDDD  ',
+        '   SSSSSS   ',
+        '  S B  B S  ',
+        '  S W  W S  ',
+        '   BBBBBB   ',
+        '  BBBBBBBB  ',
+        '  BBBBBBBB  ',
+        '   DDDDDD   ',
+        '  DDDDDDDD  ',
+        '  DDDDDDDD  ',
+      ],
+      [
+        '  D DDD D   ',
+        '  DDDDDDDD  ',
+        '  OOOOOOOO  ',
+        '  YYYYYYYY  ',
+        '   SSSSSS   ',
+        '  S B  B S  ',
+        '  S W  W S  ',
+        '   SSSSSS   ',
+        '    SSSS    ',
+        '   DDDDDD   ',
+        '  DDDDDDDD  ',
+        '  DDDDDDDD  ',
+      ],
+      [
+        '   BBBBBB   ',
+        '  BBBBBBBB  ',
+        ' BBBBBBBBBB ',
+        ' BBB SSS BB ',
+        ' BB  B  BS  ',
+        ' BB  W  WS  ',
+        ' BB SSSSSS  ',
+        ' B  SSSS    ',
+        '    SSSS    ',
+        '   OOOOOO   ',
+        '  DDDDDDDD  ',
+        '  DDDDDDDD  ',
+      ],
+      [
+        '   DDDDDD   ',
+        '  DDDDDDDD  ',
+        '  DDSSSSDD  ',
+        '  D B  B D  ',
+        '  D W  W D  ',
+        '  D SSSS D  ',
+        '  D  SS  D  ',
+        '  OOOOOOOO  ',
+        '  DDDDDDDD  ',
+        '  DDDDDDDD  ',
+        '  DDDDDDDD  ',
+        '  DDDDDDDD  ',
+      ],
+      [
+        '  O  O  O   ',
+        '  DO DO OD  ',
+        '  DDDDDDDD  ',
+        '  DDDDDDDD  ',
+        '   SSSSSS   ',
+        '  S B  B S  ',
+        '  S W  W S  ',
+        '   SSSSSS   ',
+        '    SSSS    ',
+        '   DDDDDD   ',
+        '  DDDDDDDD  ',
+        '  DDDDDDDD  ',
+      ],
+      [
+        '   BBBBB    ',
+        '  BBBBBBBB  ',
+        ' BBBBOBBBB  ',
+        '   SSSSSS   ',
+        '  D B  B S  ',
+        '  S W  W S  ',
+        '   SSSSSS   ',
+        '    SSSS    ',
+        '   DDDDDD   ',
+        '  DDWWWWDD  ',
+        '  DDDDDDDD  ',
+        '  DDDDDDDD  ',
+      ],
+      [
+        '   DDDDDD   ',
+        '  DDDDDDDD  ',
+        '  DDDDDDDD  ',
+        '   SSSSSS   ',
+        '  S B  OOD  ',
+        '  S W  OWD  ',
+        '   SSSOOD   ',
+        '    SSSS    ',
+        '   DDDDDD   ',
+        '  DDOOODDD  ',
+        '  DDDDDDDD  ',
+        '  DDDDDDDD  ',
+      ],
+      [
+        '  BBBBBBBB  ',
+        '  BBBBBBBB  ',
+        '   BBBBBB   ',
+        '   SSSSSS   ',
+        '  S B  B S  ',
+        '  S W  W S  ',
+        '   SSSSSS   ',
+        '   SSSSSS   ',
+        '    SSSS    ',
+        '   GGGGGG   ',
+        '  GGGGGGGG  ',
+        '  GGGGGGGG  ',
+      ],
+      [
+        '    DDDDDD  ',
+        '   DDDDDDD  ',
+        '  DDDDDDDD  ',
+        '   SSSSSS   ',
+        '  S B  B S  ',
+        '  S W  W S  ',
+        '   SSSSSS   ',
+        '  OOOOOOOO  ',
+        '   OOOOOO   ',
+        '   DDDDDD   ',
+        '  DDDDDDDD  ',
+        '  DDDDDDDD  ',
+      ],
+    ]
 
     /** 会话 id → 稳定种子：同一个会话每次都长同一张脸。 */
     function hashId(id) {
@@ -235,136 +478,29 @@ window.__ModuleLoader__.load({
       return hash % 100000
     }
 
-    function seededRand(seed) {
-      var value = (seed * 9301 + 49297) % 233280
-      if (value === 0) value = 7
-      return function () {
-        value = (value * 9301 + 49297) % 233280
-        return value / 233280
-      }
+    /** 角色网格（12 行 × 12 列字符）：总督固定；手下按种子取 16 套之一。 */
+    function pixelGrid(kind, seed) {
+      if (kind === 'gov') return PIXEL_GOVERNOR
+      return PIXEL_WORKERS[hashId(seed) % PIXEL_WORKERS.length]
     }
 
-    /** 12×12 像素脸：返回角色网格（null = 空）。 */
-    function faceCells(kind, seed) {
-      var grid = []
-      var y
-      var x
-      for (y = 0; y < 12; y += 1) {
-        var row = []
-        for (x = 0; x < 12; x += 1) row.push(null)
-        grid.push(row)
-      }
-      function put(px, py, role) {
-        if (px >= 0 && px < 12 && py >= 0 && py < 12) grid[py][px] = role
-      }
-      function rect(rx, ry, w, h, role) {
-        for (var j = ry; j < ry + h; j += 1) for (var i = rx; i < rx + w; i += 1) put(i, j, role)
-      }
-      var rand = seededRand(seed + 1)
-
-      /* 头：上半受光 + 四边描边 + 侧螺栓 */
-      rect(2, 2, 8, 9, 'headLo')
-      rect(2, 2, 8, 5, 'headHi')
-      rect(2, 2, 8, 1, 'edge')
-      rect(2, 10, 8, 1, 'edge')
-      rect(2, 2, 1, 9, 'edge')
-      rect(9, 2, 1, 9, 'edge')
-      rect(1, 5, 1, 2, 'edge')
-      rect(10, 5, 1, 2, 'edge')
-
-      if (kind === 'gov') {
-        /* 总督：双刺天线 + 压眉视窗 + 抿嘴 */
-        put(4, 0, 'accent')
-        put(7, 0, 'accent')
-        rect(4, 1, 4, 1, 'edge')
-        rect(3, 5, 2, 1, 'edge')
-        rect(7, 5, 2, 1, 'edge')
-        rect(3, 6, 6, 1, 'edge')
-        put(4, 6, 'accent')
-        put(7, 6, 'accent')
-        rect(4, 8, 4, 1, 'edge')
-      } else {
-        var eyes = Math.floor(rand() * 4)
-        var mouth = Math.floor(rand() * 4)
-        if (rand() < 0.7) {
-          rect(5, 1, 2, 1, 'edge')
-          rect(5, 0, 2, 1, 'accent')
-        }
-        if (eyes === 0) {
-          put(4, 6, 'eye')
-          put(7, 6, 'eye')
-        } else if (eyes === 1) {
-          rect(4, 5, 1, 2, 'eye')
-          rect(7, 5, 1, 2, 'eye')
-        } else if (eyes === 2) {
-          rect(3, 6, 6, 1, 'edge')
-          put(4, 6, 'accent')
-          put(7, 6, 'accent')
-        } else {
-          rect(4, 6, 4, 1, 'eye')
-          put(5, 6, 'edge')
-        }
-        if (mouth === 1) rect(4, 8, 4, 1, 'edge')
-        else if (mouth === 2) {
-          rect(4, 8, 4, 1, 'edge')
-          put(5, 8, 'eye')
-          put(7, 8, 'eye')
-        } else if (mouth === 3) rect(5, 8, 2, 1, 'accent')
-        if (rand() < 0.35) put(3, 8, 'accent')
-      }
-      return grid
-    }
-
-    /** 相框：2 单位厚 + 四角 1 单位像素阶梯（外框 0..15，脸占 2..13）。 */
-    function isPixelFrame(x, y) {
-      return ((y === 0 || y === 15) && x >= 2 && x <= 13) ||
-        ((y === 1 || y === 14) && x >= 1 && x <= 14) ||
-        ((x === 0 || x === 15) && y >= 2 && y <= 13) ||
-        ((x === 1 || x === 14) && y >= 1 && y <= 14)
-    }
-
+    /** 12×12 像素人：逐格描 rect，取设计稿调色板。 */
     function pixelAvatar(kind, seed) {
+      var grid = pixelGrid(kind, seed)
       var cells = []
-      var x
-      var y
-      cells.push(react.createElement('rect', {
-        key: 'bg', x: 0, y: 0, width: 16, height: 16, fill: PX.socket,
-      }))
-      /* 相框：上/左受光，下/右压暗 */
-      for (y = 0; y < 16; y += 1) {
-        for (x = 0; x < 16; x += 1) {
-          if (!isPixelFrame(x, y)) continue
-          var dark = y >= 14 || x >= 15
+      grid.forEach(function (row, y) {
+        row.split('').forEach(function (char, x) {
+          var fill = PIXEL_PALETTE[char]
+          if (fill == null) return
           cells.push(react.createElement('rect', {
-            key: 'f' + x + '-' + y,
+            key: 'p' + x + '-' + y,
             x: x, y: y, width: 1, height: 1,
-            fill: dark ? PX.ringIn : PX.ring,
-          }))
-        }
-      }
-      /* 凹口：上沿与左沿留一道浅线，下沿与右沿压到最暗 */
-      for (x = 2; x <= 13; x += 1) {
-        cells.push(react.createElement('rect', { key: 'ru' + x, x: x, y: 2, width: 1, height: 1, fill: PX.ringIn }))
-        cells.push(react.createElement('rect', { key: 'rd' + x, x: x, y: 13, width: 1, height: 1, fill: PX.socket }))
-      }
-      for (y = 3; y <= 12; y += 1) {
-        cells.push(react.createElement('rect', { key: 'rl' + y, x: 2, y: y, width: 1, height: 1, fill: PX.ringIn }))
-        cells.push(react.createElement('rect', { key: 'rr' + y, x: 13, y: y, width: 1, height: 1, fill: PX.socket }))
-      }
-      /* 脸：偏移 2 单位落进凹口 */
-      var grid = faceCells(kind, seed)
-      grid.forEach(function (row, gy) {
-        row.forEach(function (role, gx) {
-          if (role == null) return
-          cells.push(react.createElement('rect', {
-            key: 'p' + gx + '-' + gy,
-            x: gx + 2, y: gy + 2, width: 1, height: 1,
-            fill: PX[role],
+            fill: fill,
           }))
         })
       })
       return react.createElement('svg', {
-        viewBox: '0 0 16 16',
+        viewBox: '0 0 12 12',
         shapeRendering: 'crispEdges',
         width: '100%',
         height: '100%',
@@ -374,148 +510,148 @@ window.__ModuleLoader__.load({
     }
 
     /* ====================================================================== */
-    /* 样式：只用 --dsw-* 语义令牌                                             */
+    /* 样式：沿用总督面板设计稿的工业哑光配色（黑绿底 + 橘高亮）                     */
     /* ====================================================================== */
 
     var STYLESHEET = [
       /* ---- 总督面板（右侧栏窄面板与 main 兜底同一套） ---- */
       '.dsh-gov-page{position:relative;display:flex;flex-direction:column;width:100%;height:100%;',
-      '  min-height:0;overflow:hidden;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}',
-      '.dsh-gov-head{flex:none;display:flex;align-items:center;gap:10px;padding:14px 16px 0}',
-      '.dsh-gov-title{font-size:var(--dsh-content-font-size,14px);font-weight:500;color:var(--dsw-alias-label-primary);',
+      '  min-height:0;overflow:hidden;background:#101614;border:1px solid #1c2822;',
+      '  color:#e2e8e5;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}',
+      '.dsh-gov-head{flex:none;display:flex;align-items:center;gap:8px;padding:10px 12px 0}',
+      '.dsh-gov-title{font-size:12px;font-weight:500;color:#e2e8e5;',
       '  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.dsh-gov-count{flex:none;font-size:12px;color:var(--dsw-alias-label-caption)}',
+      '.dsh-gov-count{flex:none;font-size:10px;color:#7d8f87}',
       '.dsh-gov-head .dsh-gov-sp{flex:1}',
-      '.dsh-gov-action{border:0;cursor:pointer;font:inherit;font-size:12px;padding:5px 10px;',
-      '  border-radius:var(--dsw-radius-sm,8px);background:var(--dsw-alias-bg-layer-2);',
-      '  color:var(--dsw-alias-label-secondary);box-shadow:var(--dsw-elevation-stroke);',
-      '  transition:background .15s ease,color .15s ease}',
-      '.dsh-gov-action:hover{background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary)}',
-      '.dsh-gov-action:disabled{color:var(--dsw-alias-label-dimmed);cursor:default;background:var(--dsw-alias-bg-layer-1)}',
-      '.dsh-gov-head .dsh-gov-add{padding:2px 9px;font-size:15px;line-height:1.1;font-weight:600}',
+      '.dsh-gov-action{border:1px solid #23342b;cursor:pointer;font:inherit;font-size:11px;',
+      '  padding:4px 9px;border-radius:4px;background:#0b100e;color:#9bb0a6;',
+      '  transition:background .18s ease,color .18s ease,border-color .18s ease}',
+      '.dsh-gov-action:hover{background:#152019;border-color:#2f423a;color:#dce4e0}',
+      '.dsh-gov-action:disabled{color:#3c5047;cursor:default;background:#0b100e;border-color:#1b2622}',
+      '.dsh-gov-head .dsh-gov-add{padding:2px 9px;font-size:14px;line-height:1.15;font-weight:600;',
+      '  color:#ff5500;border-color:#3a2416}',
+      '.dsh-gov-head .dsh-gov-add:hover{background:#1c1208;border-color:#ff5500;color:#ff7700}',
+      '.dsh-gov-head .dsh-gov-add:disabled{color:#3c5047;border-color:#1b2622;background:#0b100e}',
 
-      '.dsh-gov-stage{position:relative;flex:1;min-height:96px;display:flex;flex-direction:column;padding:10px 16px 0}',
-      '.dsh-gov-wires{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}',
-      '.dsh-gov-top{flex:none;display:flex;align-items:center;justify-content:center;padding:2px 0}',
+      /* 舞台：上四分之一总督、下四分之三手下；连线 SVG 铺满 */
+      '.dsh-gov-stage{position:relative;flex:1;min-height:120px;display:flex;flex-direction:column;',
+      '  padding:6px 12px 0}',
+      '.dsh-gov-wires{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:10}',
+      '.dsh-gov-top{flex:none;display:flex;align-items:center;justify-content:center;padding:6px 0 0;z-index:20}',
       '.dsh-gov-grid{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;',
-      '  justify-content:center;gap:18px;padding-bottom:10px;overflow:hidden}',
-      '.dsh-gov-row{display:flex;gap:clamp(12px,3vw,40px)}',
+      '  justify-content:center;gap:clamp(14px,4vh,34px);padding:10px 0 6px;overflow:hidden;z-index:20}',
+      '.dsh-gov-row{display:flex;align-items:center;justify-content:center;gap:clamp(12px,5vw,34px)}',
 
-      /* 节点：像素头像自绘，容器不加底色与投影，只留状态色 */
+      /* 节点：像素人落在哑光发丝卡片里，状态由卡片底边与光晕表达 */
       '.dsh-gov-node{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;',
-      '  border:0;background:transparent;padding:0;cursor:pointer;color:inherit}',
-      '.dsh-gov-face{display:block;line-height:0;border-radius:0;background:transparent;',
-      '  color:var(--dsw-alias-state-idle-primary);transition:color .15s ease,opacity .15s ease}',
+      '  border:0;background:transparent;padding:0;cursor:pointer;font:inherit;color:inherit}',
+      '.dsh-gov-face{display:block;line-height:0;box-sizing:border-box;background:#0b100e;',
+      '  border:1px solid #23342b;border-bottom-width:1px;padding:5px;',
+      '  transition:border-color .2s ease,box-shadow .2s ease,opacity .2s ease}',
       '.dsh-gov-face svg{display:block;width:100%;height:100%}',
-      '.dsh-gov-face--gov{width:64px;height:64px}',
-      '.dsh-gov-face--sub{width:48px;height:48px}',
-      '.dsh-gov-node:hover .dsh-gov-face{opacity:.86}',
-      '.dsh-gov-label{max-width:88px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
-      '  font-size:12px;color:var(--dsw-alias-label-tertiary)}',
-      '.dsh-gov-branch{max-width:88px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
-      '  font-size:10px;line-height:1;padding:2px 6px;border-radius:calc(var(--dsw-radius-sm,8px) - 4px);',
-      '  background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-caption);',
-      '  box-shadow:var(--dsw-elevation-stroke)}',
-      /* 状态只用语义状态色驱动头像内的强调像素；进行中用呼吸，不加发光 */
-      '.dsh-gov-node[data-state="ongoing"] .dsh-gov-face{color:var(--dsw-alias-state-business-primary);',
-      '  animation:dsh-gov-breathe 1.6s ease-in-out infinite}',
-      '.dsh-gov-node[data-state="done"] .dsh-gov-face{color:var(--dsw-alias-state-success-primary)}',
-      '.dsh-gov-node[data-state="warning"] .dsh-gov-face{color:var(--dsw-alias-state-warn-primary)}',
-      '@keyframes dsh-gov-breathe{50%{opacity:.7}}',
-      '.dsh-gov-empty{color:var(--dsw-alias-label-caption);font-size:12px}',
+      '.dsh-gov-face--gov{width:76px;height:76px;padding:6px}',
+      '.dsh-gov-face--sub{width:56px;height:56px}',
+      '.dsh-gov-node:hover .dsh-gov-face{border-color:#2f423a}',
+      '.dsh-gov-label{max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
+      '  font-size:11px;color:#9bb0a6}',
+      '.dsh-gov-branch{max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
+      '  font-size:9px;line-height:1;padding:2px 5px;background:#0b100e;color:#7d8f87;',
+      '  border:1px solid #1b2622}',
+      /* 状态：进行中 = 橘底边 + 呼吸光晕；完成 = 橘底边 + 静态光晕；待答 = 琥珀底边 */
+      '.dsh-gov-node[data-state="ongoing"] .dsh-gov-face{border-bottom:2px solid #ff5500;',
+      '  animation:dsh-gov-breathe 1.2s ease-in-out infinite}',
+      '.dsh-gov-node[data-state="done"] .dsh-gov-face{border-bottom:2px solid #ff5500;',
+      '  box-shadow:0 4px 10px rgba(255,85,0,.8)}',
+      '.dsh-gov-node[data-state="warning"] .dsh-gov-face{border-bottom:2px solid #ff7700;',
+      '  box-shadow:0 4px 10px rgba(255,119,0,.7)}',
+      '@keyframes dsh-gov-breathe{0%,100%{opacity:.4;box-shadow:0 4px 6px rgba(255,85,0,.4)}',
+      '  50%{opacity:1;box-shadow:0 6px 14px rgba(255,85,0,.85)}}',
+      '.dsh-gov-empty{color:#7d8f87;font-size:12px}',
 
-      /* 连线：一条横母线 + 每节点一条竖支线 */
-      '.dsh-gov-wire{fill:none;stroke:var(--dsw-alias-border-l3);stroke-width:1.5}',
-      '.dsh-gov-wire[data-state="ongoing"]{stroke:var(--dsw-alias-state-business-primary);',
-      '  stroke-dasharray:4 10;animation:dsh-gov-flow 1s linear infinite}',
-      '.dsh-gov-wire[data-state="done"]{stroke:var(--dsw-alias-state-success-primary)}',
-      '.dsh-gov-tap{fill:var(--dsw-alias-border-l4)}',
-      '@keyframes dsh-gov-flow{to{stroke-dashoffset:-14}}',
+      /* 连线：直角母线 + 竖支线；传输中 = 橘色辉光 + 白色虚线流动 */
+      '.dsh-gov-wire{fill:none;stroke:#1b2822;stroke-width:1.5;',
+      '  stroke-linecap:square;stroke-linejoin:miter}',
+      '.dsh-gov-wireglow{fill:none;stroke:#ff5500;stroke-width:1.5;filter:url(#dsh-gov-glow);',
+      '  stroke-linecap:square;stroke-linejoin:miter}',
+      '.dsh-gov-wireflow{fill:none;stroke:#ffffff;stroke-width:1.5;stroke-dasharray:6 14;',
+      '  stroke-linecap:square;stroke-linejoin:miter;animation:dsh-gov-flow .75s linear infinite}',
+      '.dsh-gov-packet{fill:#ffffff}',
+      '.dsh-gov-packet--amber{fill:#ff7700}',
+      '@keyframes dsh-gov-flow{to{stroke-dashoffset:-20}}',
 
-      /* 完成气泡：宿主菜单材质（含背板模糊与 0.5px 发丝描边） */
-      '.dsh-gov-bubble{position:absolute;right:16px;top:52px;width:min(288px,calc(100% - 32px));z-index:3;',
-      '  border:0;border-radius:var(--dsw-radius-md,12px);padding:12px 14px;',
-      '  background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-2));',
-      '  backdrop-filter:var(--dsw-menu-backdrop-filter);box-shadow:var(--dsw-elevation-prominent)}',
+      /* 完成气泡：哑光面板材质 + 发丝描边 */
+      '.dsh-gov-bubble{position:absolute;right:12px;top:50px;width:min(288px,calc(100% - 24px));z-index:30;',
+      '  border:1px solid #1c2822;padding:12px 14px;background:#101614;',
+      '  box-shadow:0 10px 28px rgba(0,0,0,.55)}',
       '.dsh-gov-bubble-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}',
-      '.dsh-gov-bubble-title{flex:1;font-size:12px;color:var(--dsw-alias-label-primary);',
+      '.dsh-gov-bubble-title{flex:1;font-size:12px;color:#e2e8e5;',
       '  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.dsh-gov-bubble-close{border:0;background:transparent;cursor:pointer;padding:0 2px;',
-      '  color:var(--dsw-alias-label-caption);font:inherit;font-size:14px;line-height:1}',
-      '.dsh-gov-bubble-close:hover{color:var(--dsw-alias-label-primary)}',
-      '.dsh-gov-bubble-body{font-size:12px;line-height:1.6;color:var(--dsw-alias-label-secondary);margin-bottom:8px}',
+      '  color:#7d8f87;font:inherit;font-size:14px;line-height:1}',
+      '.dsh-gov-bubble-close:hover{color:#ff5500}',
+      '.dsh-gov-bubble-body{font-size:12px;line-height:1.6;color:#9bb0a6;margin-bottom:8px}',
       '.dsh-gov-bubble-open{border:0;background:transparent;cursor:pointer;padding:0;font:inherit;',
-      '  font-size:12px;color:var(--dsw-alias-link)}',
+      '  font-size:12px;color:#ff5500}',
       '.dsh-gov-bubble-open:hover{text-decoration:underline}',
 
       /* 选择题卡区：头部 autoAnswer 开关常驻，卡列表滚动 */
-      '.dsh-gov-cards-wrap{flex:none;display:flex;flex-direction:column;max-height:38vh;padding:6px 16px 0}',
+      '.dsh-gov-cards-wrap{flex:none;display:flex;flex-direction:column;max-height:38vh;padding:8px 12px 0}',
       '.dsh-gov-cardsbar{flex:none;display:flex;align-items:center;gap:8px;padding:2px 0 6px}',
       '.dsh-gov-cardsbar .dsh-gov-sp{flex:1}',
-      '.dsh-gov-cardsempty{font-size:11px;color:var(--dsw-alias-label-caption)}',
-      '.dsh-gov-toggle{border:0;cursor:pointer;font:inherit;font-size:11px;display:inline-flex;',
-      '  align-items:center;gap:5px;padding:3px 8px;border-radius:var(--dsw-radius-sm,8px);',
-      '  background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);',
-      '  box-shadow:var(--dsw-elevation-stroke);transition:color .15s ease,background .15s ease}',
-      '.dsh-gov-toggle:hover{color:var(--dsw-alias-label-primary)}',
-      '.dsh-gov-toggle[aria-pressed="true"]{color:var(--dsw-alias-state-business-primary)}',
-      '.dsh-gov-dot2{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-border-l4)}',
-      '.dsh-gov-toggle[aria-pressed="true"] .dsh-gov-dot2{background:var(--dsw-alias-state-business-primary)}',
+      '.dsh-gov-cardsempty{font-size:11px;color:#7d8f87}',
+      '.dsh-gov-toggle{border:1px solid #23342b;cursor:pointer;font:inherit;font-size:11px;display:inline-flex;',
+      '  align-items:center;gap:5px;padding:3px 8px;background:#0b100e;color:#9bb0a6;',
+      '  transition:color .18s ease,border-color .18s ease,background .18s ease}',
+      '.dsh-gov-toggle:hover{color:#dce4e0;border-color:#2f423a}',
+      '.dsh-gov-toggle[aria-pressed="true"]{color:#ff5500;border-color:#3a2416}',
+      '.dsh-gov-dot2{width:6px;height:6px;border-radius:50%;background:#3c5047}',
+      '.dsh-gov-toggle[aria-pressed="true"] .dsh-gov-dot2{background:#ff5500;box-shadow:0 0 6px rgba(255,85,0,.8)}',
       '.dsh-gov-cards{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px;',
       '  padding-bottom:4px}',
-      '.dsh-gov-card{border-radius:var(--dsw-radius-md,12px);padding:10px 12px;flex:none;',
-      '  background:var(--dsw-alias-bg-layer-2);box-shadow:var(--dsw-elevation-stroke)}',
+      '.dsh-gov-card{border:1px solid #1c2822;padding:10px 12px;flex:none;background:#0b100e}',
       '.dsh-gov-card-head{display:flex;align-items:center;gap:6px;margin-bottom:4px}',
-      '.dsh-gov-card-src{flex:1;font-size:11px;color:var(--dsw-alias-label-caption);',
+      '.dsh-gov-card-src{flex:1;font-size:11px;color:#7d8f87;',
       '  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.dsh-gov-card-q{font-size:12px;line-height:1.5;color:var(--dsw-alias-label-primary);margin-bottom:8px}',
+      '.dsh-gov-card-q{font-size:12px;line-height:1.5;color:#dce4e0;margin-bottom:8px}',
       '.dsh-gov-opts{display:flex;flex-wrap:wrap;gap:6px}',
-      '.dsh-gov-opt{border:0;cursor:pointer;font:inherit;font-size:12px;padding:4px 10px;',
-      '  border-radius:var(--dsw-radius-sm,8px);background:var(--dsw-alias-bg-layer-1);',
-      '  color:var(--dsw-alias-label-secondary);box-shadow:var(--dsw-elevation-stroke);',
-      '  transition:background .15s ease,color .15s ease}',
-      '.dsh-gov-opt:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+      '.dsh-gov-opt{border:1px solid #23342b;cursor:pointer;font:inherit;font-size:12px;padding:4px 10px;',
+      '  background:#101614;color:#9bb0a6;transition:border-color .18s ease,color .18s ease,background .18s ease}',
+      '.dsh-gov-opt:hover{border-color:#ff5500;color:#ff7700;background:#151009}',
 
       /* git 区：同步灯 + 状态文本 + 三指令按钮 */
-      '.dsh-gov-git{flex:none;display:flex;align-items:center;gap:8px;padding:10px 16px 0;flex-wrap:wrap}',
-      '.dsh-gov-lamp{width:8px;height:8px;border-radius:50%;flex:none;background:var(--dsw-alias-border-l4)}',
-      '.dsh-gov-lamp[data-lamp="synced"]{background:var(--dsw-alias-state-success-primary)}',
-      '.dsh-gov-lamp[data-lamp="dirty"]{background:var(--dsw-alias-state-warn-primary)}',
-      '.dsh-gov-gittxt{flex:1;min-width:0;font-size:11px;color:var(--dsw-alias-label-secondary);',
+      '.dsh-gov-git{flex:none;display:flex;align-items:center;gap:8px;padding:8px 12px 0;flex-wrap:wrap}',
+      '.dsh-gov-lamp{width:8px;height:8px;border-radius:50%;flex:none;background:#3c5047}',
+      '.dsh-gov-lamp[data-lamp="synced"]{background:#ff5500;box-shadow:0 0 7px rgba(255,85,0,.9)}',
+      '.dsh-gov-lamp[data-lamp="dirty"]{background:#ff7700;box-shadow:0 0 7px rgba(255,119,0,.8)}',
+      '.dsh-gov-gittxt{flex:1;min-width:0;font-size:11px;color:#9bb0a6;',
       '  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.dsh-gov-gitbtns{display:flex;gap:6px;width:100%;padding-top:6px}',
-      '.dsh-gov-gitbtn{flex:1;border:0;cursor:pointer;font:inherit;font-size:11px;padding:4px 6px;',
-      '  border-radius:var(--dsw-radius-sm,8px);background:var(--dsw-alias-bg-layer-2);',
-      '  color:var(--dsw-alias-label-secondary);box-shadow:var(--dsw-elevation-stroke);',
-      '  transition:background .15s ease,color .15s ease}',
-      '.dsh-gov-gitbtn:hover{background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary)}',
-      '.dsh-gov-gitbtn:disabled{color:var(--dsw-alias-label-dimmed);cursor:default;background:var(--dsw-alias-bg-layer-1)}',
+      '.dsh-gov-gitbtn{flex:1;border:1px solid #23342b;cursor:pointer;font:inherit;font-size:11px;padding:4px 6px;',
+      '  background:#0b100e;color:#9bb0a6;transition:border-color .18s ease,color .18s ease,background .18s ease}',
+      '.dsh-gov-gitbtn:hover{border-color:#ff5500;color:#ff7700;background:#151009}',
+      '.dsh-gov-gitbtn:disabled{color:#3c5047;cursor:default;border-color:#1b2622;background:#0b100e}',
 
       /* 输入井：目标下拉 + 文本 + 发送 */
-      '.dsh-gov-input{flex:none;padding:10px 16px 14px}',
-      '.dsh-gov-well{display:flex;align-items:flex-end;gap:8px;padding:8px 8px 8px 8px;border:0;',
-      '  border-radius:var(--dsw-radius-md,12px);',
-      '  background:var(--dsw-specific-input-major,var(--dsw-alias-bg-layer-2));',
-      '  box-shadow:var(--dsw-elevation-stroke)}',
-      '.dsh-gov-well:focus-within{box-shadow:var(--dsw-elevation-stroke),0 0 0 var(--dsw-focus-ring-width,2px) ',
-      '  var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}',
-      '.dsh-gov-target{flex:none;max-width:92px;border:0;font:inherit;font-size:12px;height:26px;',
-      '  padding:0 4px;border-radius:var(--dsw-radius-sm,8px);background:var(--dsw-alias-bg-layer-1);',
-      '  color:var(--dsw-alias-label-secondary);outline:none;text-overflow:ellipsis}',
+      '.dsh-gov-input{flex:none;padding:8px 12px 12px}',
+      '.dsh-gov-well{display:flex;align-items:flex-end;gap:8px;padding:8px;border:1px solid #23342b;',
+      '  background:#0b100e;transition:border-color .18s ease,box-shadow .18s ease}',
+      '.dsh-gov-well:focus-within{border-color:#ff5500;box-shadow:0 0 12px rgba(255,85,0,.28)}',
+      '.dsh-gov-target{flex:none;max-width:92px;border:1px solid #1b2622;font:inherit;font-size:12px;height:26px;',
+      '  padding:0 4px;background:#101614;color:#9bb0a6;outline:none;text-overflow:ellipsis}',
       '.dsh-gov-well textarea{flex:1;min-width:0;min-height:22px;max-height:120px;resize:none;border:0;outline:none;',
-      '  background:transparent;font:inherit;font-size:var(--dsh-content-font-size,14px);line-height:1.5;',
-      '  color:var(--dsw-alias-label-primary);padding:3px 0}',
-      '.dsh-gov-well textarea::placeholder{color:var(--dsw-alias-label-caption)}',
+      '  background:transparent;font:inherit;font-size:12px;line-height:1.5;',
+      '  color:#dce4e0;padding:3px 0}',
+      '.dsh-gov-well textarea::placeholder{color:#3c5047}',
       '.dsh-gov-send{flex:none;border:0;cursor:pointer;width:30px;height:30px;display:grid;place-items:center;',
-      '  border-radius:var(--dsw-radius-sm,8px);background:var(--dsw-alias-button-primary-fill);',
-      '  color:var(--dsw-alias-label-primary-inverted)}',
-      '.dsh-gov-send:disabled{cursor:default;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-dimmed)}',
-      '.dsh-gov-hint{display:flex;gap:6px;align-items:center;margin-top:6px;font-size:11px;',
-      '  color:var(--dsw-alias-label-caption)}',
+      '  background:#ff5500;color:#0a0e0d;font-size:14px;font-weight:600;',
+      '  transition:box-shadow .18s ease,background .18s ease}',
+      '.dsh-gov-send:hover:not(:disabled){box-shadow:0 0 14px rgba(255,85,0,.65)}',
+      '.dsh-gov-send:disabled{cursor:default;background:#1b2622;color:#3c5047;box-shadow:none}',
+      '.dsh-gov-hint{display:flex;gap:6px;align-items:center;margin-top:6px;font-size:11px;color:#7d8f87}',
 
       '@media (prefers-reduced-motion:reduce){',
       '  .dsh-gov-node[data-state="ongoing"] .dsh-gov-face{animation:none}',
-      '  .dsh-gov-wire[data-state="ongoing"]{animation:none}}',
+      '  .dsh-gov-wireflow{animation:none}}',
     ].join('\n')
 
     function installStyles() {
@@ -568,12 +704,38 @@ window.__ModuleLoader__.load({
       return summary.title || summary.displayTitle || ''
     }
 
-    /** 居中排列：≤4 一行；5→3+2；6→3+3；7→4+3；8→4+4。 */
+    /**
+     * 手下排布（照设计稿）：≤4 一行居中；5→3+2；6→3+3；7→4+3；8→4+4。
+     * 两行时第二行与第一行同列对齐，所以第一行到第二行是垂直直线下连。
+     */
+    function layoutOf(count) {
+      var total = typeof count === 'number' && count > 0 ? Math.min(count, MAX_SUB) : 0
+      if (total === 0) return { row1: [], row2: [], parentMap: {} }
+      if (total <= 4) {
+        var one = []
+        for (var i = 0; i < total; i += 1) one.push(i)
+        return { row1: one, row2: [], parentMap: {} }
+      }
+      var top = Math.ceil(total / 2)
+      var row1 = []
+      var row2 = []
+      for (var a = 0; a < top; a += 1) row1.push(a)
+      for (var b = top; b < total; b += 1) row2.push(b)
+      var parentMap = {}
+      for (var c = 0; c < row2.length; c += 1) {
+        /* 5 个手下时第二行只有 2 个，对齐第一行的首尾（设计稿的 0 / 2）。 */
+        if (row2.length === 2 && row1.length === 3) parentMap[row2[c]] = c === 0 ? 0 : 2
+        else parentMap[row2[c]] = c
+      }
+      return { row1: row1, row2: row2, parentMap: parentMap }
+    }
+
+    /** 行内节点数：≤4 一行；5→[3,2]；6→[3,3]；7→[4,3]；8→[4,4]。 */
     function rowsOf(count) {
-      if (count <= 0) return []
-      if (count <= 4) return [count]
-      var top = Math.ceil(count / 2)
-      return [top, count - top]
+      var layout = layoutOf(count)
+      if (layout.row1.length === 0) return []
+      if (layout.row2.length === 0) return [layout.row1.length]
+      return [layout.row1.length, layout.row2.length]
     }
 
     /** 轮询间隔：页面不可见时统一降到 HIDDEN_MS。 */
@@ -1172,23 +1334,54 @@ window.__ModuleLoader__.load({
         react.createElement(
           'svg',
           { className: 'dsh-gov-wires', 'aria-hidden': 'true' },
+          react.createElement(
+            'defs',
+            null,
+            react.createElement(
+              'filter',
+              { id: 'dsh-gov-glow', x: '-20%', y: '-20%', width: '140%', height: '140%' },
+              react.createElement('feGaussianBlur', { stdDeviation: '2', result: 'blur' }),
+              react.createElement(
+                'feMerge',
+                null,
+                react.createElement('feMergeNode', { in: 'blur' }),
+                react.createElement('feMergeNode', { in: 'SourceGraphic' }),
+              ),
+            ),
+          ),
+          /* 静默发丝母线 */
           wires.map(function (wire, index) {
             return react.createElement('path', {
               key: 'w' + index,
               className: 'dsh-gov-wire',
-              'data-state': wire.state,
               d: wire.d,
             })
           }),
+          /* 传输中：橘色辉光 + 白色虚线流动 + 往返数据方块 */
           wires.map(function (wire, index) {
-            return wire.tap == null ? null : react.createElement('rect', {
-              key: 't' + index,
-              className: 'dsh-gov-tap',
-              x: wire.tap.x - 2,
-              y: wire.tap.y - 2,
-              width: 4,
-              height: 4,
-            })
+            if (wire.state !== 'ongoing') return null
+            return react.createElement(
+              'g',
+              { key: 'a' + index },
+              react.createElement('path', { className: 'dsh-gov-wireglow', d: wire.d }),
+              react.createElement('path', { className: 'dsh-gov-wireflow', d: wire.d }),
+              react.createElement(
+                'rect',
+                { className: 'dsh-gov-packet', width: 4, height: 4, x: -2, y: -2 },
+                react.createElement('animateMotion', {
+                  path: wire.d, dur: '1.0s', repeatCount: 'indefinite',
+                  keyPoints: '1;0', keyTimes: '0;1', calcMode: 'linear',
+                }),
+              ),
+              react.createElement(
+                'rect',
+                { className: 'dsh-gov-packet dsh-gov-packet--amber', width: 3, height: 3, x: -1.5, y: -1.5 },
+                react.createElement('animateMotion', {
+                  path: wire.d, dur: '1.0s', begin: '0.5s', repeatCount: 'indefinite',
+                  keyPoints: '1;0', keyTimes: '0;1', calcMode: 'linear',
+                }),
+              ),
+            )
           }),
         ),
         react.createElement(
@@ -1330,7 +1523,7 @@ window.__ModuleLoader__.load({
     }
 
     /* ====================================================================== */
-    /* 连线：由总督底竖直向下 → 唯一一条横母线 → 每个节点各一条竖支线            */
+    /* 连线：总督底直角下折 → 横母线 → 第一行各节点；第二行从父节点垂直下连        */
     /* ====================================================================== */
 
     function measureWires(stage) {
@@ -1351,31 +1544,39 @@ window.__ModuleLoader__.load({
         nodes.push({
           x: box.left + box.width / 2 - stageBox.left,
           y: box.top - stageBox.top,
+          bottom: box.bottom - stageBox.top,
           state: owner == null ? 'idle' : owner.getAttribute('data-state') || 'idle',
         })
       }
       if (nodes.length === 0) return []
 
-      var firstY = nodes[0].y
-      for (var j = 1; j < nodes.length; j += 1) if (nodes[j].y < firstY) firstY = nodes[j].y
-      var busY = gy + Math.max(16, (firstY - gy) * 0.55)
+      var layout = layoutOf(nodes.length)
+      var row1 = nodes.slice(0, layout.row1.length)
+      var row2 = nodes.slice(layout.row1.length)
 
-      var left = gx
-      var right = gx
-      for (var k = 0; k < nodes.length; k += 1) {
-        if (nodes[k].x < left) left = nodes[k].x
-        if (nodes[k].x > right) right = nodes[k].x
-      }
+      var firstY = row1[0].y
+      for (var j = 1; j < row1.length; j += 1) if (row1[j].y < firstY) firstY = row1[j].y
+      var busY = gy + Math.max(16, (firstY - gy) * 0.52)
 
-      var wires = [{
-        state: 'idle',
-        d: 'M' + gx + ' ' + gy + ' V' + busY + ' M' + left + ' ' + busY + ' H' + right,
-      }]
-      for (var m = 0; m < nodes.length; m += 1) {
+      var wires = []
+      for (var k = 0; k < row1.length; k += 1) {
+        /* 第二行有节点在跑，第一行那条支线也跟着亮（设计稿同款判定）。 */
+        var childRunning = false
+        for (var m = 0; m < row2.length; m += 1) {
+          if (layout.parentMap[layout.row2[m]] === layout.row1[k] && row2[m].state === 'ongoing') childRunning = true
+        }
         wires.push({
-          state: nodes[m].state,
-          d: 'M' + nodes[m].x + ' ' + busY + ' V' + nodes[m].y,
-          tap: { x: nodes[m].x, y: busY },
+          state: childRunning ? 'ongoing' : row1[k].state,
+          d: 'M' + gx + ' ' + gy + ' L' + gx + ' ' + busY +
+            ' L' + row1[k].x + ' ' + busY + ' L' + row1[k].x + ' ' + row1[k].y,
+        })
+      }
+      for (var n = 0; n < row2.length; n += 1) {
+        var parentIndex = layout.parentMap[layout.row2[n]]
+        wires.push({
+          state: row2[n].state,
+          d: 'M' + row1[parentIndex].x + ' ' + row1[parentIndex].bottom +
+            ' L' + row2[n].x + ' ' + row2[n].y,
         })
       }
       return wires
@@ -1552,8 +1753,8 @@ window.__ModuleLoader__.load({
     // 服务名，声明即激活失败；对它们一律防御式访问，缺席时静默降级。
     exports.inject = ['slots']
     exports.__internals = {
-      state, rowsOf, stateOf, fusedState, titleOf, hashId, faceCells, pixelAvatar,
-      measureWires, STYLESHEET, shouldPass, pollDelayMs, targetsOf, branchForSession,
+      state, rowsOf, layoutOf, stateOf, fusedState, titleOf, hashId, pixelGrid, pixelAvatar,
+      PIXEL_PALETTE, PIXEL_GOVERNOR, PIXEL_WORKERS, measureWires, STYLESHEET, shouldPass, pollDelayMs, targetsOf, branchForSession,
       previewUrlOf, diffNewWorkspaces, ensureGovernor, sendPrompt, deliver,
       currentStrategy, PASS_SELECTOR, MAX_SUB, NEW_SESSION_SELECTOR, isNewSessionControl,
       addWorkerSession, createWorkspacePanel,

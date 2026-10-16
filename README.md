@@ -20,7 +20,7 @@
 | [`dsh-token-hud`](plugins/dsh-token-hud/README.md) | **侧栏 token 计量卡片**：累计用量、今日用量与缓存命中率，从会话投影缓存聚合而来。 |
 | [`dsh-session-bridge`](plugins/dsh-session-bridge/README.md) | **跨 Agent 会话桥**：把一个 DSH 会话经已鉴权的 `/api` 通道暴露给另一个 Agent（Codex、Trae…），提供发现文档、transcript、实时状态与一键复制的交接提示词。 |
 | [`dsh-element-picker`](plugins/dsh-element-picker/README.md) | **元素引用**：在内置浏览器预览里点选 UI 元素，一条精确的源码引用就落到输入框里。 |
-| [`dsh-governor-mode`](plugins/dsh-governor-mode/README.md) | **总督模式**：DSH 的默认且唯一工作模式——右侧总督面板（总督 + 最多 8 个手下的像素头像 + 状态灯 + 直角连线 + 选择题卡 + git 同步灯 + 输入井），宿主半 `/api/governor` 九路由控制平面供总督会话用 bash curl 驱动，新建工作区即建总督，全部沿用宿主 `--dsw-*` 语义令牌，官方组件零改动。 |
+| [`dsh-governor-mode`](plugins/dsh-governor-mode/README.md) | **总督模式**：DSH 的默认且唯一工作模式——右侧边栏总督面板（总督 + 最多 8 个手下的 12×12 手绘像素人 + 状态呼吸光晕 + 直角走线 / 数据光流 + 选择题卡 + git 同步灯 + 输入井），宿主半 `/api/governor` 九路由控制平面供总督会话用 bash curl 驱动，新建工作区即建总督，视觉照搬总督面板设计稿，官方组件零改动。 |
 | `dsh-picker-probe` | **诊断台**：开发 `dsh-element-picker` 时用来经真实 webview 桥驱动 picker 的一次性诊断插件，保留仅供复现。 |
 
 ## 仓库结构
