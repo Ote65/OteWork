@@ -3,8 +3,9 @@
  *
  * 总督模式是默认且唯一的工作模式，做四件事，全部走官方插槽与语义令牌：
  *  1. 侧栏工作区行（捕获阶段）：官方文件夹图标经纯 CSS 叠总督像素头像、名称尾部
- *     经伪元素挂总督徽记（不增删替换 React 节点），点击行 = 总督入口：有映射开总督会话；老工作区（有会话、无映射）不建总督，
- *     开该工作区最近一个会话、面板显示未启用空态；零会话（新建工作区）懒建总督。
+ *     经伪元素挂总督徽记（不增删替换 React 节点），点击行 = 总督入口——一级行永远
+ *     打开总督会话：有映射直接开；老工作区（有会话、无映射）新建一个总督会话并打开
+ *     （老会话不收编，保持普通二级会话）；零会话（新建工作区）懒建总督。
  *     右侧栏开「总督」标签页；
  *  2. 面板是官方右侧栏的一个**标签页**（与浏览器 / 文档 / 编辑器并列，顶部标签切换）：
  *     走官方两阶段公开通路——`sidebarRightTabs` 服务注册标签类型（kind 'governor'），
@@ -99,9 +100,12 @@ window.__ModuleLoader__.load({
      * 总督映射缓存：workspaceId → { governor }。唯一真源在宿主
      * ~/.dsh/governor-binds.json（GET /bind 读、POST /bind 写），只回答
      * 「这个工作区的总督是哪个会话」；手下（队友）关系在官方 Agent Teams
-     * 花名册里（GET /team 读投影），本插件不再自造。老工作区没有映射＝不启用。
+     * 花名册里（GET /team 读投影），本插件不再自造。老工作区没有映射时，
+     * 点一级行会新建总督会话并写映射（老会话本身不收编）。
      */
     var govBinds = {}
+    /** 总督在途登记：workspaceId → 点行时的会话 id 快照（看护轮询 diff 出新会话即总督）。 */
+    var pendingGovernor = new Map()
     /** 官方团队花名册缓存：workspaceId → { members, tasks }（GET /team 轮询写入，面板与测试的预置点）。 */
     var teamCache = {}
 
@@ -169,11 +173,11 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 一级栏工作区行点击（总督入口）：
+     * 一级栏工作区行点击（总督入口）——一级行永远打开总督会话：
      *  - 有映射 → 直接打开总督会话；
-     *  - 无映射但有会话（老工作区，总督模式启用前建的）→ 不建总督，
-     *    打开该工作区最近一个会话，面板显示未启用空态；
-     *  - 零会话（新建工作区）→ 懒建总督（官方 Agent Teams 的 Team Lead）。
+     *  - 无映射但有会话（老工作区）→ **新建一个总督会话并打开**（官方
+     *    startSession；老会话不收编、保持普通二级会话，总督对它们只读围观）；
+     *  - 零会话（新建工作区）→ 懒建总督（官方 Team Lead）。
      * 随后在官方右侧栏打开「总督」标签页。
      */
     function setWorkspace(workspaceId) {
@@ -192,12 +196,48 @@ window.__ModuleLoader__.load({
             openSession(bind.governor)
             return
           }
-          openSession(ids[ids.length - 1])
+          startGovernor(workspaceId)
         })
         return
       }
       var target = workspaceById(latest.wsList, workspaceId)
       if (target != null) lazyCreate(target)
+    }
+
+    /**
+     * 老工作区建总督：官方 startSession 新建会话（原生会直接打开它），
+     * 记下点行时的会话快照；看护轮询 diff 出新会话 id 后写映射 + 注入总督提示词。
+     */
+    function startGovernor(workspaceId) {
+      if (pendingGovernor.has(workspaceId) === true || govBinds[workspaceId] != null) return
+      var ui = serviceOf(currentCtx, 'uiWorkspace')
+      if (ui == null || typeof ui.startSession !== 'function') return
+      try { ui.startSession(workspaceId) } catch (error) {
+        console.debug('[governor-mode] governor startSession failed:', error)
+        return
+      }
+      var ids = latest.wsSessions[workspaceId]
+      pendingGovernor.set(workspaceId, Array.isArray(ids) ? ids.slice() : [])
+    }
+
+    /** 看护轮询里结算在途总督：diff 出新会话 → 写映射、开标签、注入提示词。 */
+    function settleGovernors(list) {
+      if (Array.isArray(list) !== true) return
+      pendingGovernor.forEach(function (prev, wid) {
+        var ws = workspaceById(list, wid)
+        if (ws == null) return
+        var ids = Array.isArray(ws.sessionIds) ? ws.sessionIds : []
+        var fresh = ids.filter(function (id) { return prev.indexOf(id) === -1 })
+        if (fresh.length === 0) return
+        pendingGovernor.delete(wid)
+        var governor = fresh[0]
+        govBinds[wid] = { governor: governor }
+        openSession(governor)
+        emit()
+        postBootstrap(governor, wid, ws.title || wid, []).then(function (ok) {
+          if (ok === true) apiPost('/bind', { workspace: wid, governor: governor })
+        })
+      })
     }
 
     /** 读宿主映射：命中写进 govBinds 缓存并触发重渲染。 */
@@ -949,6 +989,7 @@ window.__ModuleLoader__.load({
      * 本插件懒建的工作区会话就位后注入总督提示词（用户既有会话不打扰）。
      */
     function ensureGovernor(list, autostart) {
+      settleGovernors(list)
       var fresh = diffNewWorkspaces(knownWorkspaces, list)
       for (var i = 0; i < fresh.length; i += 1) {
         var ws = fresh[i]
@@ -1583,7 +1624,8 @@ window.__ModuleLoader__.load({
           { className: 'dsh-gov-top' },
           governorId == null
             ? react.createElement('span', { className: 'dsh-gov-empty' },
-              sessionIds.length > 0 ? '老工作区未启用总督' : '这个工作区还没有会话')
+              pendingGovernor.has(wsId) === true ? '正在建立总督…'
+                : sessionIds.length > 0 ? '点一级行建立总督会话' : '这个工作区还没有会话')
             : react.createElement(
               'button',
               {
@@ -1687,7 +1729,7 @@ window.__ModuleLoader__.load({
             rows: 1,
             value: draft,
             placeholder: governorId == null
-              ? (sessionIds.length > 0 ? '老工作区未启用总督' : '先在这个工作区新建会话')
+              ? (sessionIds.length > 0 ? '点一级行建立总督会话' : '先在这个工作区新建会话')
               : '发给…',
             disabled: governorId == null,
             onChange: function (event) { setDraft(event.target.value) },
@@ -2002,7 +2044,7 @@ window.__ModuleLoader__.load({
       TABS_SERVICE, TAB_ID, TAB_KIND, TAB_SLOT, TAB_TITLE_SLOT, TAB_LABEL,
       isNewSessionControl, relabelNewSession,
       openGovernorTab, setWorkspace, workspaceById,
-      govBinds, teamCache, loadBind, spawnWorker,
+      govBinds, pendingGovernor, teamCache, loadBind, startGovernor, settleGovernors, spawnWorker,
       GovernorTabBody, GovernorTabTitle, GovernorWatch,
       createWorkspacePanel,
     }

@@ -12,17 +12,17 @@ DSH 的默认且唯一工作模式（总督模式 v3）。**总督就是 DSH 官
 
 1. **一级栏工作区行 = 总督入口**：官方文件夹图标经**纯 CSS 伪元素**叠总督像素头像（data-URI 背景 + `visibility:hidden` 盖住原图标）、名称尾部经 `::after` 挂总督徽记——**不增删替换任何 React 管理的节点**（历史教训：曾用 `replaceChild` 手工换图标，新建会话触发侧栏重渲染时 React 协调崩溃、整条侧栏白屏，v3 起装饰全部走 CSS，回归锁测试禁止 DOM 结构改动）；点击该行（捕获阶段）在右侧栏打开「总督」标签页，并按**映射状态三分支**解析总督会话：
    - **有映射** → 直接打开总督会话（绝不把子会话误当总督）；
-   - **老工作区（有会话、无映射，总督模式启用前建的）** → **不建总督、不收编**——打开该工作区最近一个会话，面板显示「老工作区未启用总督」；
+   - **老工作区（有会话、无映射，总督模式启用前建的）** → **新建一个总督会话并打开**——官方 startSession 建出新会话即总督（看护轮询 diff 出它、写映射、注入提示词）；**老会话不收编**，保持普通二级会话，总督对它们只读围观；
    - **零会话（新建工作区）** → 懒建总督会话（官方 Team Lead）。
 
-   行内交互控件（button / a / input / select / textarea / label / `[role="button"]` / 展开 data 属性白名单）照旧放行。官方 renderer 把图标换回来时会被再装饰一遍（幂等，绝不堆叠）。
+   行内交互控件（button / a / input / select / textarea / label / `[role="button"]` / 展开 data 属性白名单）照旧放行。装饰是 CSS 规则，官方怎么重渲染都不会错位或堆叠。
 2. **原生「新建会话」按钮 = 新建工作面板**：DSH 侧栏那个 `aria-label="新建会话"` 的图标按钮被接管——点击改为走官方目录选择器 + 官方工作区创建（`uiWorkspace.pickDirectory()` → `workspaces.create({path})`），新建的工作区由差集轮询自动补总督会话与提示词。悬停提示里的「新建会话」文案改写为「新建工作面板」（`sidebar` 命名空间已被官方占用，`ctx.locale.register` 会抛错，所以只改文案；`aria-label` 保持原样，拦截器靠它定位）。注：快捷键（非点击）仍走官方行为。
 3. **总督面板，四区内容同一套**：
    - **roster 区**：顶部固定总督节点——像素头像 76px、名称＝工作区名 +「总督」（点击打开总督会话）；手下节点 = **官方 Agent Teams 花名册**（`GET /team` 折叠总督会话的 `team/*` 事件），像素头像 56px、名字用官方队友名（worker-N），状态灯（idle / ongoing 呼吸 / done / warning，failed 阶段映射 warning）+ 直角母线连线 + 手下分支名小标签（取自 git-state 的 `sub/<名>`）；**新建队友的唯一入口是总督栏右侧的「＋」**（`POST /spawn` → 官方 `agentTeams.spawnTeammate`，上限 8 官方校验、满了置灰）；
    - **选择题卡区**：轮询待答问题（问题 + 选项 + 来源手下），点选即代答；头部是 autoAnswer 开关与 **reportMode 汇报模式开关**（即时汇报 / 静默简报，读写 `/settings`）；
    - **git 区**：dev 同步灯（`devSynced` 橘 / 未同步琥珀 + ahead/behind / 无快照灰）+ 三按钮「同步 GitHub」「汇报」「预览」（预览走导航控制器公开面 `openTab('browser', {params:{url}, revealIfOpened:true})`，git-state 里没有合法 http(s) 地址时置灰）；
    - **输入井**：目标下拉（总督 / 各队友官方名 / 全体）+ 文本 → `POST /api/governor/prompt {lead, target}`，宿主优先走**官方信箱 sendMessage**（在跑的队友排队送达不打断），官方通路缺席时退回 subagents.prompt，再不通降级为 v1 验证过的草稿搬运桥（打开目标会话 + `conversation.input.left` 把文字落进它的输入框）。
-4. **新建工作区 = 新建总督；老工作区 = 不启用**：轮询 `useWorkspaces` 差集，新工作区无会话则 `uiWorkspace.startSession` 懒建总督会话，会话就位后 `POST /bootstrap` 注入总督提示词并写映射（受 `settings.autostart` 控制，默认开）。**用户既有的工作区不建总督也不注入**。映射（workspace → 总督会话 id）持久化在宿主 `~/.dsh/governor-binds.json`（`bindsPath` 配置可覆盖），浏览器半内存缓存优先；手下关系不在这里——官方花名册是唯一真源。
+4. **一级行永远打开总督**：新工作区由差集轮询懒建总督（`uiWorkspace.startSession` → 会话就位后 `POST /bootstrap` 注入提示词并写映射，受 `settings.autostart` 控制，默认开）；老工作区点一级行时 `startGovernor` 新建总督会话（`pendingGovernor` 登记 → 看护轮询 diff 出新会话 id → 写映射 + 注入提示词），**老会话不收编不改动**。映射（workspace → 总督会话 id）持久化在宿主 `~/.dsh/governor-binds.json`（`bindsPath` 配置可覆盖），浏览器半内存缓存优先；手下关系不在这里——官方花名册是唯一真源。
 5. **轮询克制**：roster/questions/team 2s、git-state 10s，页面不可见统一降到 15s；**「总督」标签页不可见时完全不排期**（本地派生——工作区看护、行装饰、现场缓存——由常挂的看护组件照常跑），卸载清干净。
 
 ### 宿主半（lib/index.js，`/api/governor` 十二路由）
@@ -141,7 +141,7 @@ node -e "const fs=require('fs');const p=process.env.USERPROFILE+'/.dsh/local-plu
 
 - **侧栏崩溃根因（v3 已修）**：曾在官方 React 树里 `replaceChild` 替换行图标——新建会话触发侧栏重渲染时 React 协调 `removeChild` 找不到自家节点，整条侧栏白屏。行装饰已全部改走纯 CSS（data-URI 伪元素），回归锁测试禁止 DOM 结构改动；若未来还要动官方行 DOM，只许用 CSS / 属性，不许增删节点。
 - **官方 Agent Teams 是 experimental 层**：随 DSH 本体发布（桌面 app.asar 与 CLI 均实测内置），但接口可能随官方版本变化；官方层若改名 / 挪位，本包的 bundle patch 与 /team 事件折叠要跟着对。
-- **老工作区不收编**：官方队友必须是总督亲手 spawn 的直系子会话，「把已有会话挂名成手下」在官方模型里做不到——按用户拍板，老工作区直接不启用总督模式。
+- **老工作区不收编**：官方队友必须是总督亲手 spawn 的直系子会话，「把已有会话挂名成手下」在官方模型里做不到——老工作区点一级行会新建总督会话并打开，但既有老会话保持普通二级会话不被收编（总督可用 transcript 只读围观）。
 - **/team 读活会话**：花名册折叠自总督会话的事件流，会话不在内存（冷）时返回空；面板点开总督会话即恢复。官方 `sessionProjections` 的冷投影未接入（防御式留白）。
 - **legacy `subagents.prompt` 真机签名未通**：实测五种调用形状全部 `invalid payload`（501 错误里带原文）——v3 起派单主通路是官方 `agentTeams.sendMessage`，legacy 只作兜底，最终兜底是草稿搬运桥。
 - 两处签名未实测：`connection.fetch.register`（多形状防御）；「预览」按钮的导航控制器 `openTab('browser', …)`（缺席静默）。

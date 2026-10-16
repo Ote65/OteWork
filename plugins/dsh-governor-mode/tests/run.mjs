@@ -1216,7 +1216,7 @@ async function runClient(reportFn) {
     equal(preview.props.disabled, true, 'preview is disabled without a url')
   })
 
-  await suite.checkAsync('an old workspace row click opens its latest session without building a governor', async () => {
+  await suite.checkAsync('an old workspace row click builds a governor session and binds it', async () => {
     const calls = []
     const bundle = loadBundle({
       fetch: (url, init) => {
@@ -1227,17 +1227,30 @@ async function runClient(reportFn) {
         return Promise.resolve({ ok: true, json: async () => ({ ok: true }) })
       },
     })
-    const { setWorkspace, govBinds, latest } = bundle.internals
+    const { setWorkspace, ensureGovernor, govBinds, pendingGovernor, latest } = bundle.internals
     latest.wsList = [{ workspaceId: 'w-old', title: '老工作区', sessionIds: ['s-old-1', 's-old-2'] }]
     latest.wsSessions = { 'w-old': ['s-old-1', 's-old-2'] }
     setWorkspace('w-old')
     await new Promise((resolve) => setTimeout(resolve, 0))
     equal(bundle.tabOpenCalls.length, 1, 'the governor tab opens right away')
-    equal(bundle.startCalls.length, 0, 'old workspaces never get a forced governor session')
-    equal(bundle.openCalls.join(','), 's-old-2', 'the latest existing session opens instead')
-    equal(govBinds['w-old'], undefined, 'no bind is invented for old workspaces')
-    const bindGet = calls.find((entry) => entry.url.includes('/api/governor/bind'))
-    assert(bindGet !== undefined, 'the host mapping was consulted')
+    equal(bundle.startCalls.join(','), 'w-old', 'a governor session is started for the old workspace')
+    equal(pendingGovernor.has('w-old'), true, 'the governor creation is pending')
+    equal(bundle.openCalls.length, 0, 'no old session is opened as if it were the governor')
+    // 看护轮询 diff 出新会话 → 写映射、打开、注入提示词
+    ensureGovernor([{ workspaceId: 'w-old', title: '老工作区', sessionIds: ['s-old-1', 's-old-2', 's-gov-new'] }], true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    equal(govBinds['w-old'].governor, 's-gov-new', 'the fresh session is bound as the governor')
+    equal(pendingGovernor.has('w-old'), false, 'pending is settled')
+    equal(bundle.openCalls.includes('s-gov-new'), true, 'the governor session opens')
+    const bootstrap = calls.find((entry) => entry.url.includes('/api/governor/bootstrap'))
+    assert(bootstrap !== undefined, 'the governor prompt was injected')
+    const bindPost = calls.find((entry) => entry.url.includes('/api/governor/bind') && entry.init != null && entry.init.body != null)
+    assert(bindPost !== undefined, 'the mapping was persisted to the host')
+    equal(JSON.parse(bindPost.init.body).governor, 's-gov-new', 'bind carries the new governor')
+    // 再点行：直接开总督会话，不再新建
+    setWorkspace('w-old')
+    equal(bundle.startCalls.length, 1, 'a bound workspace never starts another governor')
+    equal(bundle.openCalls.filter((id) => id === 's-gov-new').length, 2, 'the governor opens again directly')
   })
 
   suite.check('the panel resolves the governor from the bind and teammates from the official roster', () => {
@@ -1278,7 +1291,7 @@ async function runClient(reportFn) {
     equal(failedNodes[0].props['data-state'], 'warning', 'failed phase maps to the warning lamp')
   })
 
-  suite.check('an unbound workspace with sessions shows the not-enabled empty state', () => {
+  suite.check('an unbound workspace with sessions shows the build-governor empty state', () => {
     const bundle = loadBundle()
     const panel = bundle.registrations.find((entry) => entry.registration.name === 'sidebar.right.pane.tab')
     const element = panel.Component({
@@ -1288,7 +1301,7 @@ async function runClient(reportFn) {
       useSessionStatus: (pick) => pick(new Map()),
     })
     const texts = textsOf(element).join(' | ')
-    includes(texts, '老工作区未启用总督', 'old workspaces stay out of governor mode')
+    includes(texts, '点一级行建立总督会话', 'the stage invites building the governor via the row click')
     equal(bundle.internals.latest.governorId, null, 'no session is mistaken for the governor')
     const govNodes = findByClass(element, 'dsh-gov-node').filter((node) => node.props['data-gov-node'] === 'gov')
     equal(govNodes.length, 0, 'no governor node without a bind')
