@@ -10,7 +10,6 @@
     nsis-welcome.bmp  164×314         NSIS 欢迎/完成页侧图
     nsis-banner-01..10.bmp  150×57    NSIS 页眉逐帧动画（橘色光带右扫）
     nsis-splash.bmp   360×220         NSIS 开场闪屏
-    pkg-background.png 620×418        macOS 安装器背景
 """
 
 import sys
@@ -59,20 +58,17 @@ def label(size, color=TEXT, spacing=0):
     return ImageFont.truetype(str(ttf), size)
 
 
-def mark(size, ink=True):
-    """方形标：官方 mark 反白到深底（ink=True）或直接黑标（ink=False）。"""
+def mark(size):
+    """方形标：官方 mark 反白到深底。"""
     src = Image.open(BRAND / 'ote-work-mark.png').convert('RGBA')
     bbox = src.getbbox()
     src = src.crop(bbox)
     side = max(src.size)
     canvas = Image.new('RGBA', (side, side), (0, 0, 0, 0))
     canvas.paste(src.resize(src.size, Image.LANCZOS), ((side - src.width) // 2, (side - src.height) // 2))
-    if ink:
-        alpha = canvas.split()[3]
-        solid = Image.new('RGBA', canvas.size, TEXT + (255,))
-        solid.putalpha(alpha)
-        canvas = solid
-    return canvas.resize((size, size), Image.LANCZOS)
+    solid = Image.new('RGBA', canvas.size, TEXT + (255,))
+    solid.putalpha(canvas.split()[3])
+    return solid.resize((size, size), Image.LANCZOS)
 
 
 def vertical_gradient(size, top, bottom):
@@ -169,32 +165,12 @@ def build_splash():
     image.convert('RGB').save(OUT / 'nsis-splash.bmp', format='BMP')
 
 
-def build_pkg():
-    """mac 安装器背景：浅色（面板上的正文是系统深色字，深底看不清）。
-    品牌锁在左下角——上面整片留给安装器的欢迎 / 说明 / 许可正文。"""
-    size = (620, 418)
-    image = vertical_gradient(size, (246, 247, 246), (231, 234, 231)).convert('RGBA')
-    art = mark(34, ink=False)
-    left, baseline = 32, size[1] - 46
-    image.alpha_composite(art, (left, baseline - 4))
-    draw = ImageDraw.Draw(image)
-    font = label(17, (28, 34, 31))
-    small = label(10, (128, 140, 134))
-    if font is not None:
-        draw.text((left + 44, baseline - 3), 'OteWork', font=font, fill=(28, 34, 31))
-    if small is not None:
-        draw.text((left + 45, baseline + 21), 'DSH PLUGIN SET', font=small, fill=(128, 140, 134))
-    draw.rectangle([left + 45, baseline + 38, left + 129, baseline + 39], fill=ORANGE)
-    image.convert('RGB').save(OUT / 'pkg-background.png')
-
-
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     write_ico(OUT / 'installer.ico')
     build_nsis()
     build_banner()
     build_splash()
-    build_pkg()
     print('素材已生成：' + ', '.join(sorted(p.name for p in OUT.iterdir() if p.is_file())))
 
 

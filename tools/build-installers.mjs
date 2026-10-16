@@ -11,8 +11,9 @@
  *              /usr/local/share/OteWork（OteWork 插件集 + 离线安装脚本）
  * 应用来源优先级：--app-path → 本机 /Applications → 官方发布通道下载（进 ~/.ote-build/cache）。
  *
+ * 安装界面：macOS 侧不做任何自定义皮肤，交给系统默认安装器（介绍 / 目的宗卷 / 安装 / 摘要）。
  * 组件包默认带 <relocate>（Installer 会去找同 bundle id 的旧拷贝装到那儿去），
- * 整机包把它摘掉，保证一定落在 /Applications。
+ * 这里把它摘掉，保证一定落在 /Applications。
  */
 
 import { execFileSync } from 'node:child_process'
@@ -53,30 +54,8 @@ function sha256(file) {
   return createHash('sha256').update(readFileSync(file)).digest('hex')
 }
 
-function escapeHtml(text) {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
-
 function plistString(info, key) {
   return new RegExp(`<key>${key}</key>\\s*<string>([^<]+)</string>`).exec(info)?.[1]
-}
-
-/** 安装器说明页是 HTML，插件表要出成行而不是 markdown（表头写在模板里）。 */
-function pluginRowsHtml(plugins) {
-  return plugins
-    .map(
-      (plugin) =>
-        `<tr><td class="name">${escapeHtml(plugin.name)}</td><td>${escapeHtml(plugin.version)}</td><td>${escapeHtml(plugin.description)}</td></tr>`,
-    )
-    .join('\n')
-}
-
-function requireAsset(name) {
-  const file = join(ASSETS, name)
-  if (existsSync(file) === false) {
-    fail(`缺少安装界面素材 ${name}，先跑：python3 tools/installer/branding/make.py`)
-  }
-  return file
 }
 
 function fail(message) {
@@ -139,21 +118,19 @@ console.log(`载荷 ${meta.plugins.length} 个插件${wantApp ? ' + 应用本体
 
 const out = []
 
-/* ---------- macOS：pkgbuild + productbuild ---------- */
+/* ---------- macOS：pkgbuild（出裸组件包，界面走系统默认） ---------- */
 if (wantMac) {
   if (process.platform !== 'darwin') fail('mac 安装包只能在 macOS 上打')
 
   const root = join(work, 'mac-root')
   cpSync(stage, join(root, INSTALL_PATH), { recursive: true })
 
-  let appVersion = ''
   if (wantApp) {
     const source = await resolveApp()
     const info = readFileSync(join(source, 'Contents', 'Info.plist'), 'utf8')
     const executable = plistString(info, 'CFBundleExecutable')
     const archs = executable === undefined ? '' : run('lipo', ['-archs', join(source, 'Contents', 'MacOS', executable)])
-    appVersion = `${plistString(info, 'CFBundleShortVersionString') ?? '?'} ${archs}`.trim()
-    console.log(`  应用本体 ${source}  ${appVersion}`)
+    console.log(`  应用本体 ${source}  ${plistString(info, 'CFBundleShortVersionString') ?? '?'} ${archs}`)
     mkdirSync(join(root, 'Applications'), { recursive: true })
     /* ditto 原样搬运：符号链接、扩展属性、权限、签名密封都不动 */
     run('ditto', [source, join(root, 'Applications', APP_BUNDLE)])
@@ -163,21 +140,6 @@ if (wantMac) {
   mkdirSync(scripts, { recursive: true })
   cpSync(join(INSTALLER, 'mac', 'scripts', 'postinstall'), join(scripts, 'postinstall'))
   chmodSync(join(scripts, 'postinstall'), 0o755)
-
-  /* 安装器页面资源：Apple 只认这些固定文件名 */
-  const resources = join(work, 'mac-resources')
-  mkdirSync(resources, { recursive: true })
-  cpSync(requireAsset('pkg-background.png'), join(resources, 'background.png'))
-  cpSync(join(stage, 'LICENSE'), join(resources, 'license.txt'))
-  const fill = (file) =>
-    readFileSync(join(INSTALLER, 'mac', 'resources', file), 'utf8')
-      .replaceAll('<!--APPVERSION-->', escapeHtml(appVersion))
-      .replace('<!--APPROW-->', wantApp
-        ? `<tr><td class="name">DeepSeek Harness 应用本体</td><td>${escapeHtml(appVersion)}</td><td>装到 /Applications，官方签名与公证原样不变</td></tr>`
-        : '')
-      .replace('<!--PLUGINS-->', pluginRowsHtml(meta.plugins))
-  writeFileSync(join(resources, 'welcome.html'), fill('welcome.html'))
-  writeFileSync(join(resources, 'readme.html'), fill('readme.html'))
 
   const rawComponent = join(work, 'component.pkg')
   run('pkgbuild', [
@@ -189,32 +151,11 @@ if (wantMac) {
     rawComponent,
   ])
 
-  const componentName = `${SLUG}-${VERSION}.pkg`
-  const packagePath = join(work, 'pkgs')
-  mkdirSync(packagePath, { recursive: true })
-  const component = join(packagePath, componentName)
-  const stripped = stripRelocate(rawComponent, work, component)
-  console.log(`  组件包 ${stripped ? '已摘掉 relocation' : '无需改'}`)
-
-  const distribution = join(work, 'distribution.xml')
-  writeFileSync(
-    distribution,
-    readFileSync(join(INSTALLER, 'mac', 'distribution.xml'), 'utf8')
-      .replaceAll('@@TITLE@@', `${SLUG} ${VERSION}`)
-      .replaceAll('@@VERSION@@', VERSION)
-      .replaceAll('@@COMPONENT@@', componentName)
-      .replaceAll('@@IDENTIFIER@@', IDENTIFIER),
-  )
-
   const suffix = wantApp ? '-macOS' : '-macOS-plugins'
   const pkg = join(DIST, `${SLUG}-${VERSION}${suffix}.pkg`)
   rmSync(pkg, { force: true })
-  run('productbuild', [
-    '--distribution', distribution,
-    '--resources', resources,
-    '--package-path', packagePath,
-    pkg,
-  ])
+  const stripped = stripRelocate(rawComponent, work, pkg)
+  console.log(`  组件包 ${stripped ? '已摘掉 relocation' : '无需改'}`)
   out.push(pkg)
 }
 

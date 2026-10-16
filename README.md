@@ -41,10 +41,8 @@ tools/
 ├── lib/stage.mjs         打包共享：从 git 已提交内容导载荷 + 版本号
 └── installer/            安装器定义
     ├── nsis/OteWork.nsi          Windows 向导（NSIS Modern UI 2）
-    ├── mac/distribution.xml      mac 安装器界面定义
     ├── mac/scripts/postinstall   mac 安装收尾（以登录用户身份写 DSH 配置）
-    ├── mac/resources/            欢迎 / 说明 / 许可页
-    └── branding/make.py          生成图标与安装界面素材（Pillow）
+    └── branding/make.py          NSIS 界面素材：图标 / 页眉 / 横幅帧 / 闪屏（Pillow）
 ```
 
 每个插件目录都是一个可独立挂载的 DSH 插件包：`package.json` 声明包名，
@@ -61,7 +59,7 @@ node tools/build-installers.mjs --plugins   # → dist/OteWork-1.0.0-macOS-plugi
 node tools/build-installers.mjs --win       # → dist/OteWork-Setup-1.0.0.exe（插件，Windows）
 ```
 
-- **macOS `.pkg`（整机）**：Apple 安装器界面（品牌背景 + 欢迎页 + 许可条款 + 说明页 + 进度动画），
+- **macOS `.pkg`（整机）**：走系统默认安装器界面（介绍 / 目的宗卷 / 安装 / 摘要），不做自定义皮肤。
   一次装两样：`/Applications/DeepSeek Harness.app`（官方成品，签名与公证原样保留）+ 
   `/usr/local/share/OteWork`（OteWork 插件集）。收尾脚本以当前登录用户的身份把插件写进 DSH profile；
   全新机器上它还顺手立好 desktop profile 骨架，插件第一次打开应用就位，用户不必进终端。
@@ -81,7 +79,7 @@ Windows 侧需要 `makensis`。macOS 上打 Windows 包可下载 [electron-build
 NSISDIR=<解压目录> OTE_MAKENSIS=<解压目录>/mac/makensis node tools/build-installers.mjs --win
 ```
 
-安装界面素材（图标、页眉图、横幅动画帧、闪屏、pkg 背景）由 `tools/installer/branding/make.py` 生成，
+NSIS 界面素材（图标、页眉图、横幅动画帧、闪屏）由 `tools/installer/branding/make.py` 生成，
 需要 `pillow`；重跑一次即可整套重出。
 
 不想用安装器、想手工放插件时：
