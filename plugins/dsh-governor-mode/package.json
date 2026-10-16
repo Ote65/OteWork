@@ -1,8 +1,8 @@
 {
   "name": "dsh-governor-mode",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "DeepSeek Harness 的第二种工作模式：主区顶栏最左一个「经典｜总督」开关，总督模式下点侧栏工作区行改为打开总督页（总督头像 + 最多 8 个子会话头像 + 直角母线连线），全部沿用宿主 --dsw-* 语义令牌。",
+  "description": "DeepSeek Harness 的默认工作模式（总督模式，无开关）：点侧栏工作区行打开右侧总督面板（与内置浏览器/文档预览并列切换；总督头像 + 最多 8 个手下头像 + 状态灯 + 直角连线），宿主半提供 /api/governor 控制平面（roster/transcript/prompt/answer/command/settings/git-state），全部沿用宿主 --dsw-* 语义令牌。",
   "keywords": [
     "dsh",
     "deepseek-harness",
