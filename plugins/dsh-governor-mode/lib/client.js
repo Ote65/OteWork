@@ -3,20 +3,20 @@
  *
  * 总督模式是默认且唯一的工作模式，做四件事，全部走官方插槽与语义令牌：
  *  1. 侧栏工作区行（捕获阶段）：行内文件夹图标换成总督像素头像、名称尾部挂总督徽记，
- *     点击行 → 打开该工作区的总督会话（行内交互控件放行）；
- *  2. 面板挂在官方 `shell.overlay`（root 作用域的列表槽，官方重命名弹窗 / toast 也在这里），
- *     做成贴右边缘的**浮层抽屉**：从右侧向外滑出，绝对定位、不占布局列宽，
- *     所以永远不会挤压会话区（不再调用 layout.openRightbar，官方右栏保持收起）；
- *     官方会话 header 的「展开右侧栏」按钮（[data-sidebar-right-expand]）被接管为抽屉开关，
- *     面板开合状态写在根节点 data 属性与 __internals 供实测定位；
+ *     点击行 → 打开该工作区的总督会话 + 在右侧栏打开「总督」标签页（行内交互控件放行）；
+ *  2. 面板是官方右侧栏的一个**标签页**（与浏览器 / 文档 / 编辑器并列，顶部标签切换）：
+ *     走官方两阶段公开通路——`sidebarRightTabs` 服务注册标签类型（kind 'governor'），
+ *     body / title 分别注册进 keyed 槽 `sidebar.right.pane.tab(.title)`（key = 类型 id），
+ *     与官方 guide 标签同一条路；开标签用公开面 `sidebarRight.openTab('governor')`；
+ *     `shell.overlay` 只挂一个渲染 null 的看护组件（工作区现场缓存 + 新工作区建总督）；
  *  3. 四区内容同一套：roster（总督 + ≤8 手下 + 状态灯 + 直角连线 + 分支标签）、
  *     选择题卡（autoAnswer 开关）、git 区（同步灯 + 指令按钮）、输入井（目标下拉）；
  *  4. 数据走宿主半 /api/governor/*（相对路径 fetch，同源），roster/questions 2s、
- *     git-state 10s，页面不可见统一降到 15s，抽屉收起时只保留本地派生不拉网络；
+ *     git-state 10s，页面不可见统一降到 15s，标签页不可见时只保留本地派生不拉网络；
  *     新建工作区 = 懒建总督 + 注入提示词。
  *
  * 视觉沿用总督面板设计稿：工业哑光黑绿底 + 橘高亮、12×12 手绘像素人、直角连线与数据光流。
- * 像素头像只出现在总督面板内，官方侧栏与品牌席位的原生头像/图标一个都不动。
+ * 像素头像出现在总督面板与一级栏工作区行两处，官方其余原生头像/图标一个都不动。
  *
  * @module dsh-governor-mode/client
  */
@@ -30,23 +30,25 @@ window.__ModuleLoader__.load({
 
     var react = require('react')
 
-    /** 面板挂载槽：官方 `shell.overlay`（root 作用域列表槽，官方弹窗 / toast 同住）。 */
+    /** 看护组件挂载槽：官方 `shell.overlay`（root 作用域列表槽），只渲染 null。 */
     var OVERLAY_SLOT = 'shell.overlay'
-    /** 抽屉在 shell.overlay 列表里的身份。 */
     var OVERLAY_ID = 'dsh-governor-mode'
+    /** 右侧栏标签页：官方两阶段公开通路（标签类型服务 + body/title keyed 槽）。 */
+    var TABS_SERVICE = 'sidebarRightTabs'
+    var TAB_ID = 'dsh-governor'
+    var TAB_KIND = 'governor'
+    var TAB_SLOT = 'sidebar.right.pane.tab'
+    var TAB_TITLE_SLOT = 'sidebar.right.pane.tab.title'
+    var TAB_LABEL = '总督'
     /** composer 工具行左侧：草稿搬运桥，渲染 null（发提示词失败时降级用）。 */
     var DRAFT_SLOT = 'conversation.input.left'
     var STYLE_ID = 'dsh-governor-mode/css'
     var ROOT_ATTR = 'data-dsh-governor-mode'
     var MOUNT_ATTR = 'data-dsh-governor-mount'
-    /** 抽屉开合标记：`open` / `closed`（实测与自测都读它）。 */
-    var PANEL_ATTR = 'data-dsh-governor-panel'
     /** 一级栏工作区行：文件夹图标换总督像素头像，名称尾部挂总督徽记。 */
     var ROW_SELECTOR = '[data-row-key^="workspace:"]'
     var ROW_ATTR = 'data-dsh-gov-row'
     var CROWN = '\u{1F451}'
-    /** 官方会话 header 的「展开右侧栏」按钮（会话区右上角，接管为抽屉开关）。 */
-    var EXPAND_SELECTOR = '[data-sidebar-right-expand]'
     /** 一个总督最多带 8 个手下会话。 */
     var MAX_SUB = 8
     /** 宿主半控制平面前缀（相对路径 fetch 与宿主同源）。 */
@@ -72,10 +74,11 @@ window.__ModuleLoader__.load({
       workspaceId: null,
       draft: null,
       bubbleClosed: false,
-      panelOpen: false,
     }
-    /** 面板实际挂载位置（现仅 'overlay'，保留策略名便于实测定位）。 */
+    /** 面板实际挂载位置（现仅 'tab'，保留策略名便于实测定位）。 */
     var mountStrategy = null
+    /** autostart 缓存：面板拉到 /settings 后写入，常挂的看护组件据此建总督。 */
+    var autostartCache = true
     /**
      * 最近一次渲染定位到的工作区现场（拦截开面板、点行开会话、打开预览时用）：
      * wsList 官方工作区快照、wsSessions 工作区 id → 会话 id 有序表、governorId 当前工作区总督。
@@ -151,23 +154,11 @@ window.__ModuleLoader__.load({
       if (mountStrategy != null && typeof root.setAttribute === 'function') {
         root.setAttribute(MOUNT_ATTR, mountStrategy)
       }
-      root.setAttribute(PANEL_ATTR, state.panelOpen === true ? 'open' : 'closed')
     }
-
-    /** 抽屉开合：只改插件自己的浮层状态，绝不碰官方右栏与会话区宽度。 */
-    function setPanelOpen(open) {
-      var next = open === true
-      if (state.panelOpen === next) return
-      state.panelOpen = next
-      applyMarker()
-      emit()
-    }
-
-    function toggleGovernorPanel() { setPanelOpen(state.panelOpen !== true) }
 
     /**
      * 一级栏工作区行点击：打开该工作区的总督会话（无会话则走官方 startSession
-     * 建一个并打开），同时把抽屉展开到右侧。官方右栏一概不动。
+     * 建一个并打开），随后在官方右侧栏打开「总督」标签页。
      */
     function setWorkspace(workspaceId) {
       if (typeof workspaceId !== 'string' || workspaceId === '') return
@@ -179,7 +170,14 @@ window.__ModuleLoader__.load({
         var target = workspaceById(latest.wsList, workspaceId)
         if (target != null) lazyCreate(target)
       }
-      setPanelOpen(true)
+      openGovernorTab()
+    }
+
+    /** 在右侧栏打开总督标签页（公开面 openTab，作用于在屏会话；缺席时静默）。 */
+    function openGovernorTab() {
+      var sr = sidebarRightOf(currentCtx)
+      if (sr == null || typeof sr.openTab !== 'function') return
+      try { sr.openTab(TAB_KIND, { revealIfOpened: true }) } catch (error) { void error }
     }
 
     /** 在工作区快照里按 id 取那一项（点行开会话时用）。 */
@@ -551,21 +549,13 @@ window.__ModuleLoader__.load({
     /* ====================================================================== */
 
     var STYLESHEET = [
-      /* ---- 浮层抽屉：贴右边缘、绝对定位、从右外侧滑出（不占列宽，不挤会话区） ---- */
-      '.dsh-gov-drawer{position:absolute;top:0;right:0;bottom:0;width:min(420px,46vw);',
-      '  display:flex;flex-direction:column;min-height:0;z-index:5;pointer-events:none;',
-      '  transform:translateX(104%);transition:transform .3s cubic-bezier(.22,.61,.36,1);',
-      '  border-left:1px solid #1c2822;box-shadow:-16px 0 36px rgba(0,0,0,.5);background:#101614}',
-      '.dsh-gov-drawer--open{transform:translateX(0);pointer-events:auto}',
-      '.dsh-gov-drawer-close{position:absolute;top:6px;right:8px;z-index:40;border:0;cursor:pointer;',
-      '  width:22px;height:22px;padding:0;background:transparent;color:#7d8f87;font:inherit;',
-      '  font-size:14px;line-height:1;transition:color .18s ease}',
-      '.dsh-gov-drawer-close:hover{color:#ff5500}',
       /* ---- 一级栏工作区行：总督像素头像 + 名称尾部徽记 ---- */
       '.dsh-gov-avatar{display:block;width:100%;height:100%;image-rendering:pixelated}',
       '.dsh-gov-crown{margin-left:4px;font-size:11px;opacity:.85;vertical-align:baseline}',
+      /* ---- 右侧栏标签页标题（与浏览器 / 文档 / 编辑器并列的标签 chip） ---- */
+      '.dsh-gov-tab-title{display:inline-flex;align-items:center;gap:4px;font-size:12px}',
 
-      /* ---- 总督面板（抽屉与实测兜底同一套） ---- */
+      /* ---- 总督面板（右侧栏标签页主体） ---- */
       '.dsh-gov-page{position:relative;display:flex;flex-direction:column;width:100%;height:100%;',
       '  min-height:0;overflow:hidden;background:#101614;border:1px solid #1c2822;',
       '  color:#e2e8e5;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}',
@@ -954,7 +944,7 @@ window.__ModuleLoader__.load({
 
     /**
      * 周期跑 fn；document.hidden 时统一降到 HIDDEN_MS，卸载清干净。
-     * `active === false` 时完全不排期（抽屉收起就不再拉网络），重新激活会立刻补一次。
+     * `active === false` 时完全不排期（标签页不可见就不再拉网络），重新激活会立刻补一次。
      */
     function usePoll(fn, activeMs, active) {
       var saved = react.useRef(fn)
@@ -1042,7 +1032,7 @@ window.__ModuleLoader__.load({
 
     function GovernorPanel(props) {
       var view = useGov()
-      /* 抽屉收起时不拉网络：本地派生（工作区看护、行装饰、现场缓存）照常跑。 */
+      /* 标签页不可见时不拉网络：本地派生（工作区看护、行装饰、现场缓存）照常跑。 */
       var active = props.active !== false
       var items = props.useWorkspaces ? props.useWorkspaces(pickItems) : null
       var byId = props.useSessions ? props.useSessions(pickById) : null
@@ -1149,6 +1139,7 @@ window.__ModuleLoader__.load({
               autoAnswer: settingsBody.settings.autoAnswer === true,
               autostart: settingsBody.settings.autostart !== false,
             }
+            autostartCache = nextSettings.autostart
             if (JSON.stringify(nextSettings) !== JSON.stringify(settings)) setSettings(nextSettings)
           }
         }).catch(function () { void 0 })
@@ -1168,7 +1159,7 @@ window.__ModuleLoader__.load({
       usePoll(refreshCore, ROSTER_MS, active)
       usePoll(refreshGit, GIT_MS, active)
       var wsKey = sessionIds.join(',')
-      /* 工作区看护是本地派生（懒建总督 + 注入提示词），与抽屉开合无关。 */
+      /* 工作区看护是本地派生（懒建总督 + 注入提示词），与标签页可见性无关。 */
       react.useEffect(function () {
         ensureGovernor(list, settings.autostart)
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1665,12 +1656,6 @@ window.__ModuleLoader__.load({
       try { return target.closest(NEW_SESSION_SELECTOR) != null } catch (error) { return false }
     }
 
-    /** 命中会话 header 的「展开右侧栏」按钮（接管为抽屉开关）。 */
-    function isRightbarExpandControl(target) {
-      if (target == null || typeof target.closest !== 'function') return false
-      try { return target.closest(EXPAND_SELECTOR) != null } catch (error) { return false }
-    }
-
     /** 叶子节点文案替换：悬停提示里的「新建会话」→「新建工作面板」。 */
     function relabel(node) {
       if (node == null || node.nodeType !== 1) return
@@ -1774,14 +1759,6 @@ window.__ModuleLoader__.load({
           createWorkspacePanel()
           return
         }
-        // 官方「展开右侧栏」＝总督面板开关：拦下来开我们的浮层抽屉，官方右栏保持收起。
-        if (isRightbarExpandControl(target) === true) {
-          event.preventDefault()
-          event.stopPropagation()
-          if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation()
-          toggleGovernorPanel()
-          return
-        }
         // 行内动作（更多 / 官方展开控件 / 工作区行内的新建会话）照旧放行。
         if (shouldPass(target) === true) return
         if (typeof target.closest !== 'function') return
@@ -1803,7 +1780,7 @@ window.__ModuleLoader__.load({
     }
 
     /* ====================================================================== */
-    /* 挂载：官方 shell.overlay 里的右侧浮层抽屉（不占列宽，绝不挤会话区）            */
+    /* 挂载：官方右侧栏的「总督」标签页（与浏览器 / 文档 / 编辑器并列切换）              */
     /* ====================================================================== */
 
     function markStrategy(strategy) {
@@ -1814,40 +1791,85 @@ window.__ModuleLoader__.load({
 
     function currentStrategy() { return mountStrategy }
 
-    /**
-     * 抽屉：贴右边缘、绝对定位于官方 overlay 层，靠 transform 从右侧外滑入滑出。
-     * 面板常挂（收起时只是移出视口）——一级栏点行要的现场缓存、新工作区的总督看护
-     * 都靠它常驻渲染；网络轮询由 active 关掉，收起时不产生请求。
-     */
-    function GovernorDrawer(props) {
-      var view = useGov()
-      var open = view.panelOpen === true
-      var wired = typeof props.useWorkspaces === 'function' && typeof props.useSessions === 'function'
-      return react.createElement(
-        'div',
-        {
-          className: open ? 'dsh-gov-drawer dsh-gov-drawer--open' : 'dsh-gov-drawer',
-          'data-dsh-gov-drawer': open ? 'open' : 'closed',
-          'data-dsh-gov-wired': wired ? 'ok' : 'missing',
-        },
-        open
-          ? react.createElement('button', {
-            type: 'button',
-            className: 'dsh-gov-drawer-close',
-            'aria-label': '关闭总督面板',
-            onClick: function () { setPanelOpen(false) },
-          }, '\u00d7')
-          : null,
-        GovernorPanel({ active: open, useWorkspaces: props.useWorkspaces, useSessions: props.useSessions, useSessionStatus: props.useSessionStatus }),
-      )
+    /** 标签 chip 标题：与官方 guide 标签同款（字形 + 文案）。 */
+    function GovernorTabTitle() {
+      return react.createElement('span', { className: 'dsh-gov-tab-title' }, TAB_LABEL)
     }
 
-    /** 注册到官方 `shell.overlay`：列表槽常挂，且与官方弹窗 / toast 同一层。 */
-    function mountDrawer(ctx) {
-      markStrategy('overlay')
-      return ctx.slots.inject(OVERLAY_SLOT, function () {
-        return ctx.slots.register({ name: OVERLAY_SLOT, id: OVERLAY_ID, order: 40 }, GovernorDrawer)
+    /**
+     * 标签页主体：官方 keyed 槽只在标签存在时渲染，`useTabInfo().tab.visible`
+     * 给出「右栏展开且本标签激活」——不可见时面板只保留本地派生、不拉网络。
+     */
+    function GovernorTabBody(props) {
+      var visible = true
+      if (typeof props.useTabInfo === 'function') {
+        try {
+          var info = props.useTabInfo()
+          visible = info == null || info.tab == null ? true : info.tab.visible !== false
+        } catch (error) { visible = true }
+      }
+      return GovernorPanel({
+        active: visible,
+        useWorkspaces: props.useWorkspaces,
+        useSessions: props.useSessions,
+        useSessionStatus: props.useSessionStatus,
       })
+    }
+
+    /**
+     * 官方两阶段通路（与 shipped guide 标签同一条路）：
+     *  1. `sidebarRightTabs` 服务注册标签类型（id + kind + title）；
+     *  2. body / title 分别注册进 keyed 槽 `sidebar.right.pane.tab(.title)`，key = 类型 id。
+     */
+    function mountGovernorTab(ctx) {
+      markStrategy('tab')
+      var disposers = []
+      var tabs = serviceOf(ctx, TABS_SERVICE)
+      if (tabs != null && typeof tabs.register === 'function') {
+        try {
+          disposers.push(tabs.register({
+            id: TAB_ID,
+            kind: TAB_KIND,
+            priority: 'extension',
+            title: function () { return TAB_LABEL },
+          }))
+        } catch (error) { void error }
+      }
+      try {
+        disposers.push(ctx.slots.inject(TAB_SLOT, function () {
+          return ctx.slots.register({ name: TAB_SLOT, key: TAB_ID }, GovernorTabBody)
+        }))
+        disposers.push(ctx.slots.inject(TAB_TITLE_SLOT, function () {
+          return ctx.slots.register({ name: TAB_TITLE_SLOT, key: TAB_ID }, GovernorTabTitle)
+        }))
+      } catch (error) { void error }
+      return function () {
+        for (var i = disposers.length - 1; i >= 0; i -= 1) {
+          try { disposers[i]() } catch (error) { void error }
+        }
+      }
+    }
+
+    /**
+     * 常挂看护（shell.overlay，渲染 null）：标签页只有打开时才挂载面板，
+     * 而一级栏点行要同步拿到工作区会话表、新工作区要随时建总督——这两件事
+     * 由这里常驻完成，不拉任何 /api/governor 网络。
+     */
+    function GovernorWatch(props) {
+      var items = typeof props.useWorkspaces === 'function' ? props.useWorkspaces(pickItems) : null
+      var list = Array.isArray(items) ? items : []
+      latest.wsList = list
+      latest.wsSessions = {}
+      for (var i = 0; i < list.length; i += 1) {
+        var item = list[i]
+        if (item == null || item.workspaceId == null) continue
+        latest.wsSessions[item.workspaceId] = Array.isArray(item.sessionIds) ? item.sessionIds : []
+      }
+      react.useEffect(function () {
+        ensureGovernor(list, autostartCache)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [list])
+      return null
     }
 
     /* ====================================================================== */
@@ -1864,14 +1886,18 @@ window.__ModuleLoader__.load({
           if (root != null) {
             root.removeAttribute(ROOT_ATTR)
             root.removeAttribute(MOUNT_ATTR)
-            root.removeAttribute(PANEL_ATTR)
           }
         }
       }, 'governor-mode: root marker')
       ctx.effect(function () { return installSidebarInterceptor() }, 'governor-mode: sidebar intercept')
       ctx.effect(function () {
-        return mountDrawer(ctx)
-      }, 'governor-mode: governor panel')
+        return ctx.slots.inject(OVERLAY_SLOT, function () {
+          return ctx.slots.register({ name: OVERLAY_SLOT, id: OVERLAY_ID, order: 40 }, GovernorWatch)
+        })
+      }, 'governor-mode: workspace watch')
+      ctx.effect(function () {
+        return mountGovernorTab(ctx)
+      }, 'governor-mode: governor tab')
       ctx.effect(function () {
         return ctx.slots.inject(DRAFT_SLOT, function () {
           return ctx.slots.register({ name: DRAFT_SLOT, id: 'governor-mode-bridge', order: 90 }, DraftBridge)
@@ -1881,16 +1907,18 @@ window.__ModuleLoader__.load({
 
     exports.name = 'governor-mode'
     exports.apply = apply
-    // 只声明 'slots'（同 element-picker）：layout/uiWorkspace 不是 Cordis 客户端
-    // 服务名，声明即激活失败；对它们一律防御式访问，缺席时静默降级。
+    // 只声明 'slots'（同 element-picker）：layout/uiWorkspace/sidebarRight 不是
+    // Cordis 客户端强制依赖，声明即激活失败；一律防御式访问，缺席时静默降级。
     exports.inject = ['slots']
     exports.__internals = {
       state, latest, rowsOf, layoutOf, stateOf, fusedState, titleOf, hashId, pixelGrid, pixelAvatar, pixelAvatarElement,
       PIXEL_PALETTE, PIXEL_GOVERNOR, PIXEL_WORKERS, measureWires, STYLESHEET, shouldPass, pollDelayMs, targetsOf, branchForSession,
       previewUrlOf, diffNewWorkspaces, ensureGovernor, sendPrompt, deliver,
-      currentStrategy, PASS_SELECTOR, MAX_SUB, NEW_SESSION_SELECTOR, EXPAND_SELECTOR, ROW_SELECTOR, CROWN,
-      isNewSessionControl, isRightbarExpandControl, decorateWorkspaceRow, decorateWorkspaceRows,
-      setPanelOpen, toggleGovernorPanel, setWorkspace, workspaceById,
+      currentStrategy, PASS_SELECTOR, MAX_SUB, NEW_SESSION_SELECTOR, ROW_SELECTOR, CROWN,
+      TABS_SERVICE, TAB_ID, TAB_KIND, TAB_SLOT, TAB_TITLE_SLOT, TAB_LABEL,
+      isNewSessionControl, decorateWorkspaceRow, decorateWorkspaceRows,
+      openGovernorTab, setWorkspace, workspaceById,
+      GovernorTabBody, GovernorTabTitle, GovernorWatch,
       addWorkerSession, createWorkspacePanel,
     }
     return module.exports

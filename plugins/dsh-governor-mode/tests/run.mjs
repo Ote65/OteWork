@@ -578,6 +578,8 @@ function loadBundle(options = {}) {
   const startCalls = []
   const openCalls = []
   const createCalls = []
+  const tabTypeCalls = []
+  const tabOpenCalls = []
   const baseCtx = {
     effect(body) {
       const dispose = body()
@@ -596,6 +598,15 @@ function loadBundle(options = {}) {
         registrations.push({ registration, Component })
         return () => {}
       },
+    },
+    sidebarRightTabs: options.withoutTabs === true ? undefined : {
+      register(definition) {
+        tabTypeCalls.push(definition)
+        return () => {}
+      },
+    },
+    sidebarRight: {
+      openTab: (kind, opts) => { tabOpenCalls.push({ kind, opts }) },
     },
     uiWorkspace: {
       startSession: (wid) => { startCalls.push(wid) },
@@ -627,7 +638,7 @@ function loadBundle(options = {}) {
 
   return {
     spec, exported, react, attrs, listeners, head, disposers,
-    injected, registrations, startCalls, openCalls, createCalls, ctx,
+    injected, registrations, startCalls, openCalls, createCalls, tabTypeCalls, tabOpenCalls, ctx,
     internals: exported.__internals,
   }
 }
@@ -685,60 +696,55 @@ async function runClient(reportFn) {
     equal(source.includes('conversation.header.leading'), false, 'header slot is gone')
   })
 
-  suite.check('the drawer mounts into the official shell.overlay slot', () => {
+  suite.check('the governor registers as an official right-sidebar tab type', () => {
     const bundle = loadBundle()
-    equal(bundle.internals.currentStrategy(), 'overlay', 'strategy')
-    const reg = bundle.registrations.find((entry) => entry.registration.name === 'shell.overlay')
-    assert(reg !== undefined, 'overlay registration present')
-    equal(reg.registration.id, 'dsh-governor-mode', 'drawer id')
-    includes(bundle.injected.join(','), 'shell.overlay', 'injected into the overlay slot')
-    equal(bundle.attrs['data-dsh-governor-mount'], 'overlay', 'strategy recorded on the root')
-    equal(bundle.attrs['data-dsh-governor-panel'], 'closed', 'drawer starts closed on the root')
-    // 旧路线彻底移除：不再开官方右栏、不再猜 pane 注册面。
+    equal(bundle.internals.currentStrategy(), 'tab', 'strategy')
+    equal(bundle.attrs['data-dsh-governor-mount'], 'tab', 'strategy recorded on the root')
+    // 阶段一：标签类型注册进官方 sidebarRightTabs 服务（与 shipped guide 同一条路）
+    equal(bundle.tabTypeCalls.length, 1, 'one tab type registered')
+    equal(bundle.tabTypeCalls[0].id, 'dsh-governor', 'tab type id')
+    equal(bundle.tabTypeCalls[0].kind, 'governor', 'tab kind')
+    equal(bundle.tabTypeCalls[0].title(), '总督', 'tab title')
+    // 阶段二：body / title 进官方 keyed 槽，key = 类型 id
+    const body = bundle.registrations.find((entry) => entry.registration.name === 'sidebar.right.pane.tab')
+    const title = bundle.registrations.find((entry) => entry.registration.name === 'sidebar.right.pane.tab.title')
+    assert(body !== undefined, 'tab body registered')
+    assert(title !== undefined, 'tab title registered')
+    equal(body.registration.key, 'dsh-governor', 'body keyed by type id')
+    equal(title.registration.key, 'dsh-governor', 'title keyed by type id')
+    // 常挂看护仍在 shell.overlay（渲染 null：现场缓存 + 新工作区建总督）
+    const watch = bundle.registrations.find((entry) => entry.registration.name === 'shell.overlay')
+    assert(watch !== undefined, 'watcher registered on the overlay slot')
+    // 旧路线彻底移除：不开官方右栏、不猜 pane、不做覆盖界面的浮层抽屉。
     const source = readFileSync(clientPath, 'utf8')
-    equal(source.includes('openRightbar('), false, 'official rightbar is never opened')
+    equal(source.includes('openRightbar('), false, 'official rightbar is never force-opened')
     equal(source.includes('registerPane'), false, 'no pane registration guesswork')
+    equal(source.includes('dsh-gov-drawer'), false, 'no overlay drawer left behind')
   })
 
-  suite.check('the drawer slides out of the right edge without taking column width', () => {
+  suite.check('the tab body renders the panel and the watcher caches the scene', () => {
     const bundle = loadBundle()
     const internals = bundle.internals
-    const reg = bundle.registrations.find((entry) => entry.registration.name === 'shell.overlay')
+    const body = bundle.registrations.find((entry) => entry.registration.name === 'sidebar.right.pane.tab')
+    const title = bundle.registrations.find((entry) => entry.registration.name === 'sidebar.right.pane.tab.title')
     const hooks = {
-      useWorkspaces: () => ({}),
-      useSessions: () => ({}),
-      useSessionStatus: () => new Map(),
+      useTabInfo: () => ({ tab: { visible: true } }),
+      useWorkspaces: (pick) => pick({ items: [{ workspaceId: 'w1', sessionIds: ['s-gov'], title: '面板一' }] }),
+      useSessions: (pick) => pick({ byId: {} }),
+      useSessionStatus: (pick) => pick(new Map()),
     }
-    const closed = reg.Component(hooks)
-    equal(closed.props['data-dsh-gov-drawer'], 'closed', 'closed marker')
-    equal(closed.props['data-dsh-gov-wired'], 'ok', 'root hooks reached the drawer')
-    equal(findByClass(closed, 'dsh-gov-drawer-close').length, 0, 'no close button while closed')
-    // 官方「展开右侧栏」按钮接管为抽屉开关
-    const handler = bundle.listeners.click[0]
-    const expandEvent = () => ({
-      target: { closest: (selector) => (selector === internals.EXPAND_SELECTOR ? {} : null) },
-      prevented: false,
-      preventDefault() { this.prevented = true },
-      stopPropagation() {},
-      stopImmediatePropagation() {},
-    })
-    const opened = expandEvent()
-    handler(opened)
-    equal(opened.prevented, true, 'official expand button is hijacked')
-    equal(internals.state.panelOpen, true, 'drawer opens')
-    equal(bundle.attrs['data-dsh-governor-panel'], 'open', 'root marker reads open')
-    // 抽屉样式：贴右边缘的绝对浮层 + 从右外侧滑入
-    includes(internals.STYLESHEET, '.dsh-gov-drawer{position:absolute', 'anchored overlay')
-    includes(internals.STYLESHEET, 'transform:translateX(104%)', 'parked outside the right edge')
-    includes(internals.STYLESHEET, '.dsh-gov-drawer--open{transform:translateX(0)', 'slides in on open')
-    // 开着的抽屉带关闭按钮，按钮收起抽屉
-    const open = reg.Component(hooks)
-    equal(open.props['data-dsh-gov-drawer'], 'open', 'open marker')
-    const close = findByClass(open, 'dsh-gov-drawer-close')
-    equal(close.length, 1, 'one close button while open')
-    close[0].props.onClick()
-    equal(internals.state.panelOpen, false, 'close button collapses the drawer')
-    equal(bundle.attrs['data-dsh-governor-panel'], 'closed', 'root marker back to closed')
+    const rendered = body.Component(hooks)
+    assert(rendered != null && rendered.props != null, 'tab body renders the panel tree')
+    const chip = title.Component({})
+    equal(textsOf(chip).join(''), '总督', 'chip title text')
+    includes(internals.STYLESHEET, '.dsh-gov-tab-title', 'chip style present')
+    // 看护组件：填 latest 现场缓存、渲染 null
+    const watch = bundle.registrations.find((entry) => entry.registration.name === 'shell.overlay')
+    equal(watch.Component(hooks), null, 'watcher renders nothing')
+    equal(internals.latest.wsSessions.w1.join(','), 's-gov', 'watcher cached the workspace session table')
+    // 标签不可见时面板仍在（active=false 只关网络，由 usePoll 保证）
+    const hidden = body.Component({ ...hooks, useTabInfo: () => ({ tab: { visible: false } }) })
+    assert(hidden != null, 'panel still mounted while the tab is hidden')
   })
 
   suite.check('apply survives a Cordis-style proxy ctx (bare unknown-service reads throw)', () => {
@@ -746,12 +752,21 @@ async function runClient(reportFn) {
     // 访问抛 `cannot get property "x" without inject`。本插件曾在挂载期的
     // sidebarRight 探测里裸访问而整条目激活失败——这里确保永不复发。
     const bundle = loadBundle({ cordisProxy: true })
-    equal(bundle.internals.currentStrategy(), 'overlay', 'activation completed, strategy chosen')
-    equal(bundle.disposers.length, 5, 'all five effects registered and disposed cleanly')
+    equal(bundle.internals.currentStrategy(), 'tab', 'activation completed, strategy chosen')
+    equal(bundle.disposers.length, 6, 'all six effects registered and disposed cleanly')
     includes(bundle.injected.join(','), 'conversation.input.left', 'draft bridge still injected')
     equal(bundle.attrs['data-dsh-governor-mode'], '', 'root marker set')
     // 拦截器也照常装上（点工作区行依赖它）
     equal(bundle.listeners.click.length, 1, 'interceptor installed')
+  })
+
+  suite.check('activation degrades quietly when the tab services are absent', () => {
+    const bundle = loadBundle({ withoutTabs: true, cordisProxy: true })
+    equal(bundle.internals.currentStrategy(), 'tab', 'activation still completes')
+    equal(bundle.tabTypeCalls.length, 0, 'no tab type without the registry service')
+    bundle.internals.openGovernorTab()
+    equal(bundle.tabOpenCalls.length, 1, 'openTab goes through the public face when present')
+    equal(bundle.tabOpenCalls[0].kind, 'governor', 'opens the governor kind')
   })
 
   suite.check('sidebar interceptor passes inline controls and captures workspace rows', () => {
@@ -771,15 +786,15 @@ async function runClient(reportFn) {
     // 行内按钮放行
     handler(makeEvent({ closest: (selector) => (selector === PASS_SELECTOR ? {} : null) }))
     equal(prevented.value, false, 'inline button passes through')
-    // 工作区行拦截：直接打开该工作区的总督会话（一级栏不再是文件夹，是总督）
+    // 工作区行拦截：打开该工作区的总督会话 + 右侧栏总督标签页（一级栏是总督入口）
     const row = { getAttribute: () => 'workspace:w9' }
     bundle.internals.latest.wsSessions = { w9: ['s-gov', 's-a'] }
     handler(makeEvent({ closest: (selector) => (selector.startsWith('[data-row-key') ? row : null) }))
     equal(prevented.value, true, 'workspace row is intercepted')
     equal(bundle.internals.state.workspaceId, 'w9', 'the workspace is selected')
     equal(bundle.openCalls.join(','), 's-gov', 'the workspace governor session is opened')
-    equal(bundle.internals.state.panelOpen, true, 'the drawer opens with the session')
-    equal(bundle.attrs['data-dsh-governor-panel'], 'open', 'root marker reads open')
+    equal(bundle.tabOpenCalls.length, 1, 'the governor tab is opened in the right sidebar')
+    equal(bundle.tabOpenCalls[0].kind, 'governor', 'opened by kind')
     // 原生新建会话控件按 aria-label 定位（走下一个用例的分支，不落到行点击上）
     includes(NEW_SESSION_SELECTOR, 'aria-label="新建会话"', 'native new-session control is matched by aria-label')
   })
@@ -1031,9 +1046,10 @@ async function runClient(reportFn) {
   suite.check('the panel renders all four sections', () => {
     const bundle = loadBundle()
     const registrations = bundle.registrations
-    const panel = registrations.find((entry) => entry.registration.name === 'shell.overlay')
-    assert(panel !== undefined, 'the panel component is registered')
+    const panel = registrations.find((entry) => entry.registration.name === 'sidebar.right.pane.tab')
+    assert(panel !== undefined, 'the panel component is registered as the tab body')
     const element = panel.Component({
+      useTabInfo: () => ({ tab: { visible: true } }),
       useWorkspaces: (pick) => pick({ items: [{ workspaceId: 'w1', title: '阿尔法', sessionIds: ['s-gov', 's-a', 's-b'] }] }),
       useSessions: (pick) => pick({ byId: { 's-gov': { title: '总督' }, 's-a': { title: '甲' }, 's-b': { title: '乙' } } }),
       useSessionStatus: (pick) => pick(new Map()),
