@@ -83,18 +83,18 @@ window.__ModuleLoader__.load({
       '[data-dsh-token-hud="card"]{',
       'border-radius:2em;',
       'background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#1c1c1e) 62%,transparent);',
-      // The rim is derived from the text colour, not `--dsw-alias-border-l1`:
-      // that token is faint enough to disappear when the panel sits on a
-      // same-coloured sidebar — which is exactly what the light theme did.
-      'border:1px solid color-mix(in srgb,var(--dsw-alias-label-primary,#e7ebf3) 13%,transparent);',
-      'box-shadow:0 10px 30px -12px rgba(0,0,0,.32),0 1px 3px rgba(0,0,0,.08);',
+      // The rim is the owner's Oltra orange, and the shadow is stacked in three
+      // levels — a tight contact shadow, a deep drop, and an orange bloom — so
+      // the card reads as raised rather than painted on the sidebar.
+      'border:1px solid color-mix(in srgb,#ff5a1f 55%,transparent);',
+      'box-shadow:0 1px 2px rgba(0,0,0,.18),0 12px 28px -14px rgba(0,0,0,.5),0 0 22px -10px rgba(255,90,31,.45);',
       '-webkit-backdrop-filter:blur(24px) saturate(170%);',
       'backdrop-filter:blur(24px) saturate(170%);',
       'cursor:pointer;',
       'transition:box-shadow .3s ease,background-color .3s ease,transform .2s ease-out;',
       '}',
       '[data-dsh-token-hud="card"]:hover{',
-      'box-shadow:0 14px 36px -12px rgba(0,0,0,.4),0 1px 3px rgba(0,0,0,.1);',
+      'box-shadow:0 1px 2px rgba(0,0,0,.2),0 16px 34px -14px rgba(0,0,0,.55),0 0 28px -8px rgba(255,90,31,.6);',
       '}',
       '[data-dsh-token-hud="card"]:active{transform:scale(.99)}',
       // The tiles are solid, not a tint: the raised surface the theme defines for

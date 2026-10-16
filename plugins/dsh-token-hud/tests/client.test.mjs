@@ -282,13 +282,14 @@ export async function run(report) {
     equal(String(style.padding), '8px 8px 10px', 'card inset')
   })
 
-  suite.check('keeps a visible card rim in both themes', () => {
+  suite.check('the card wears an orange rim over a layered shadow', () => {
     const { head } = loadBundle()
     const css = head.children[0].textContent
     const card = css.slice(css.indexOf('[data-dsh-token-hud="card"]'))
-    // The rim is mixed from the text colour, so it cannot vanish when the panel
-    // sits on a same-coloured sidebar (which --dsw-alias-border-l1 did).
-    assert(card.includes('border:1px solid color-mix(in srgb,var(--dsw-alias-label-primary'), `rim must stay visible: ${card}`)
+    // The rim is the owner's Oltra orange; the shadow stacks a contact layer,
+    // a deep drop and an orange bloom for depth.
+    assert(card.includes('border:1px solid color-mix(in srgb,#ff5a1f 55%,transparent);'), `rim must be orange: ${card}`)
+    assert(card.includes('box-shadow:0 1px 2px rgba(0,0,0,.18),0 12px 28px -14px rgba(0,0,0,.5),0 0 22px -10px rgba(255,90,31,.45);'), `shadow must layer three levels: ${card}`)
     assert(card.includes('border-radius:2em'), 'corner radius scales with the base')
     assert(css.includes('[data-dsh-token-hud="tile"]{'), 'tiles carry their own rim too')
   })
