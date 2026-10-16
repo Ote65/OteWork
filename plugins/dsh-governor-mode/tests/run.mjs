@@ -95,7 +95,12 @@ function makeCtx(options = {}) {
     inject(names, body) {
       body(Object.assign({}, ctx, {
         webServer: {
+          // 真实宿主的 register 是依赖 this 的方法（token-hud 用
+          // webServer.register(...) 带接收者调用才成功）；未绑定调用必须炸，
+          // 以此抓住「摘出方法裸调」的回归。
+          mounted: [],
           register(route) {
+            this.mounted.push(route)
             registered.push(route)
             return () => {}
           },

@@ -466,12 +466,11 @@ export function workerBriefingPrompt(base, workspaceId, sessionId, workspaceTitl
  * @returns 注销函数，或 null。
  */
 export function registerOn(webServer, path, handler) {
-  const register = webServer?.register
-  if (typeof register !== 'function') return null
+  if (webServer === undefined || webServer === null || typeof webServer.register !== 'function') return null
   const attempts = [
-    () => register({ kind: 'exact', path, handler }),
-    () => register(path, handler),
-    () => register({ path, handler }),
+    () => webServer.register({ kind: 'exact', path, handler }),
+    () => webServer.register(path, handler),
+    () => webServer.register({ path, handler }),
   ]
   for (const attempt of attempts) {
     try {
@@ -980,9 +979,11 @@ export function apply(ctx, config = {}) {
       const webServer = serviceOf(scope, 'webServer')
       if (webServer === undefined || webServer === null) return
       const connection = serviceOf(scope, 'connection')
-      const dispose = mountRoutes(scope, webServer, safeConfig, connection)
       if (typeof scope?.effect === 'function') {
-        scope.effect(() => dispose, 'governor-mode: api routes')
+        // 照 token-hud 已验证通路：注册本身在 effect 里执行，effect 收 dispose。
+        scope.effect(() => mountRoutes(scope, webServer, safeConfig, connection), 'governor-mode: api routes')
+      } else {
+        mountRoutes(scope, webServer, safeConfig, connection)
       }
     })
     return
@@ -990,9 +991,10 @@ export function apply(ctx, config = {}) {
   const webServer = serviceOf(ctx, 'webServer')
   if (webServer === undefined || webServer === null) return
   const connection = serviceOf(ctx, 'connection')
-  const dispose = mountRoutes(ctx, webServer, safeConfig, connection)
   if (typeof ctx?.effect === 'function') {
-    ctx.effect(() => dispose, 'governor-mode: api routes')
+    ctx.effect(() => mountRoutes(ctx, webServer, safeConfig, connection), 'governor-mode: api routes')
+  } else {
+    mountRoutes(ctx, webServer, safeConfig, connection)
   }
 }
 
