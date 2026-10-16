@@ -82,6 +82,7 @@ function loadBundle({ withTheme = true, source } = {}) {
   const tokenDisposals = []
   const disposers = []
   const warnings = []
+  const listeners = []
 
   documentStub = {
     documentElement: makeElement('html'),
@@ -89,6 +90,16 @@ function loadBundle({ withTheme = true, source } = {}) {
     body: makeElement('body'),
     createElement: (tagName) => makeElement(tagName),
     getElementById: (id) => documentStub.head.children.find((node) => node.id === id) ?? null,
+    /* Minimal DOM surface for the typing-glow effect: no host card exists in
+     * this fake world, so the effect must also survive finding nothing. */
+    querySelector: () => null,
+    addEventListener: (type, handler, options) => {
+      listeners.push({ type, handler, options })
+    },
+    removeEventListener: (type, handler) => {
+      const at = listeners.findIndex((entry) => entry.type === type && entry.handler === handler)
+      if (at !== -1) listeners.splice(at, 1)
+    },
   }
 
   const windowStub = {
@@ -133,6 +144,7 @@ function loadBundle({ withTheme = true, source } = {}) {
     tokenDisposals,
     disposers,
     warnings,
+    listeners,
     get head() {
       return documentStub.head.children
     },
@@ -208,7 +220,6 @@ export async function run(report) {
     const css = sheetById(bundle, STYLE_ID)
 
     includes(css, '[class*="_button"][class*="_primary"]', 'outline primary button')
-    includes(css, '[class*="_composerStack"] [class*="_card"]:focus-within', 'composer focus ring')
     includes(css, '[class*="_sessionRow"][class*="_selected"]', 'selected row marker')
     includes(css, '[class*="_ioCard"]', 'tool card fill')
     includes(css, '[class*="_triggerLabel"]', 'model/permission chip ellipsis')
@@ -220,6 +231,44 @@ export async function run(report) {
     includes(css, '[class*="_sidebarCol"] > div > [class*="_root"]', 'sidebar root rule')
     includes(css, 'background-color: #292929;', 'sidebar root fill')
     includes(css, 'color: #ffffff;', 'sidebar root text')
+
+    /* 聚焦辉光（主人钦定 2026-10-16）：CSS 分层 floor + JS 打字分量合成外发光。 */
+    includes(css, '[data-composer-card="true"]:hover', 'composer hover floor')
+    includes(css, '[data-composer-card="true"]:focus-within', 'composer focus floor')
+    includes(css, '--ote-floor: 0.14;', 'hover floor value')
+    includes(css, '--ote-floor: 0.45;', 'focus floor value')
+    includes(
+      css,
+      'box-shadow: 0 0 calc(22px * (var(--ote-floor, 0) + var(--ote-typed, 0)))',
+      'glow blends the floor and the typing component'
+    )
+    includes(
+      css,
+      'rgba(255, 90, 31, calc(0.45 * (var(--ote-floor, 0) + var(--ote-typed, 0))))',
+      'glow alpha follows the same blend'
+    )
+    includes(css, 'transition: box-shadow 0.25s ease-out', 'glow changes fade')
+
+    /* 发送钮三态（主人钦定 2026-10-16）：灰 → 橙图标 → 橙底白箭头。 */
+    includes(css, 'button[class*="_primary"]:disabled', 'send button disabled state')
+    includes(css, 'background-color: #3a3a3d;', 'disabled grey fill')
+    includes(css, 'color: #8b8b90;', 'disabled grey icon')
+    includes(css, 'button[class*="_primary"]:not(:disabled){', 'send button ready state')
+    includes(css, 'color: #ff5a1f;', 'ready icon is the accent')
+    includes(css, 'button[class*="_primary"]:not(:disabled):hover', 'send button hover state')
+    includes(css, 'background-color: #ff5a1f;', 'hover fills the accent')
+    includes(css, 'transition: background-color 0.2s ease, color 0.2s ease', 'button colours fade')
+  })
+
+  suite.check('the typing glow effect listens for keydown and cleans up on dispose', () => {
+    const bundle = loadBundle()
+    bundle.exported.apply(bundle.ctx)
+    assert(
+      bundle.listeners.some((entry) => entry.type === 'keydown'),
+      'a capture keydown listener is registered'
+    )
+    for (const dispose of bundle.disposers) dispose()
+    equal(bundle.listeners.length, 0, 'the listener is dropped on dispose')
   })
 
   suite.check('the plugin sheet covers the audited third-party hooks', () => {

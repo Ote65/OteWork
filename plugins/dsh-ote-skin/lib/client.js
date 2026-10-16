@@ -23,6 +23,11 @@
  *     raises specificity above the shipped 0,1,0–0,2,0 rules and makes the
  *     whole layer removable by dropping one attribute.
  *
+ *     The composer card's typing glow is the one dynamic touch: a small JS
+ *     half (registered through `ctx.effect`, disposed with the layer) feeds
+ *     `--ote-typed` from the keystroke rate, while CSS floors the glow for
+ *     the hover and focus states through `--ote-floor`.
+ *
  * Deliberately NOT changed: layout, spacing, and every typography property
  * (font family/size/line-height/letter-spacing) — including inside the AI
  * transcript. The only markdown properties this skin touches are colours
@@ -240,7 +245,6 @@ window.__ModuleLoader__.load({
 			'  --dsh-ote-accent: #ff5a1f;',
 			'  --dsh-ote-accent-hover: #ff7a3d;',
 			'  --dsh-ote-accent-press: rgba(255, 90, 31, 0.16);',
-			'  --dsh-ote-glow-ring: 0 0 0 2px rgba(255, 90, 31, 0.32), 0 0 14px -4px rgba(255, 90, 31, 0.5);',
 			'}',
 
 			/* §7.1 主按钮 = 透明底 + 1px 橙描边 + 橙字；不加投影、不加辉光。 */
@@ -248,6 +252,7 @@ window.__ModuleLoader__.load({
 			'  background: transparent;',
 			'  color: #ff8a5c;',
 			'  box-shadow: inset 0 0 0 1px var(--dsh-ote-accent);',
+			'  transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;',
 			'}',
 			'html[' + SKIN_ATTR + '] [class*="_button"][class*="_primary"]:hover:not(:disabled){',
 			'  background: transparent;',
@@ -283,19 +288,54 @@ window.__ModuleLoader__.load({
 			'html[' + SKIN_ATTR + '] [class*="_composerStack"] [class*="_add"]{',
 			'  background: transparent;',
 			'  color: #94a3b8;',
+			'  transition: background-color 0.2s ease, color 0.2s ease;',
 			'}',
 			'html[' + SKIN_ATTR + '] [class*="_composerStack"] [class*="_add"]:hover{',
 			'  background: rgba(255, 255, 255, 0.06);',
 			'  color: #f1f5f9;',
 			'}',
-			/* §7.3 辉光只属于聚焦（§5.1 纪律）。 */
-			'html[' + SKIN_ATTR + '] [class*="_composerStack"] [class*="_card"]:focus-within{',
-			'  box-shadow: var(--dsh-ote-glow-ring);',
-			'}',
-			/* 输入卡底色：主人钦定 #212121（2026-10-16）。data 属性是宿主自带的
-			 * 稳定钩子，不用赌 CSS-module 的名字。 */
+			/* Composer card glow (owner request, 2026-10-16). The card fill stays
+			 * the owner's #212121; the data attribute is the host's stable hook,
+			 * so we do not bet on a CSS-module name here. CSS floors the glow for
+			 * the interaction states through `--ote-floor` (rest / hover / focus),
+			 * the JS half feeds the typing component `--ote-typed` (0 to 0.55)
+			 * from the keystroke rate, and box-shadow blends both into one orange
+			 * glow that fades through the transition. */
 			'html[' + SKIN_ATTR + '] [data-composer-card="true"]{',
 			'  background-color: #212121;',
+			'  --ote-floor: 0;',
+			'  --ote-typed: 0;',
+			'  box-shadow: 0 0 calc(22px * (var(--ote-floor, 0) + var(--ote-typed, 0))) rgba(255, 90, 31, calc(0.45 * (var(--ote-floor, 0) + var(--ote-typed, 0))));',
+			'  transition: box-shadow 0.25s ease-out;',
+			'}',
+			/* §7.3 辉光只属于交互态（§5.1 纪律）；focus 规则在后，同时命中时赢。 */
+			'html[' + SKIN_ATTR + '] [data-composer-card="true"]:hover{',
+			'  --ote-floor: 0.14;',
+			'}',
+			'html[' + SKIN_ATTR + '] [data-composer-card="true"]:focus-within{',
+			'  --ote-floor: 0.45;',
+			'}',
+
+			/* Send button, three states (owner request, 2026-10-16): grey fill and
+			 * icon while the input is empty, orange icon once there is text, and
+			 * an orange fill with a white arrow on hover. `opacity: 1` keeps the
+			 * owner's grey exact even under the outline-button dimming above. */
+			'html[' + SKIN_ATTR + '] [data-composer-card="true"] button[class*="_primary"]{',
+			'  transition: background-color 0.2s ease, color 0.2s ease;',
+			'}',
+			'html[' + SKIN_ATTR + '] [data-composer-card="true"] button[class*="_primary"]:disabled{',
+			'  background-color: #3a3a3d;',
+			'  color: #8b8b90;',
+			'  box-shadow: none;',
+			'  opacity: 1;',
+			'}',
+			'html[' + SKIN_ATTR + '] [data-composer-card="true"] button[class*="_primary"]:not(:disabled){',
+			'  background-color: transparent;',
+			'  color: #ff5a1f;',
+			'}',
+			'html[' + SKIN_ATTR + '] [data-composer-card="true"] button[class*="_primary"]:not(:disabled):hover{',
+			'  background-color: #ff5a1f;',
+			'  color: #ffffff;',
 			'}',
 
 			/* 侧栏根：实底 #292929、文字纯白 —— 主人钦定（2026-10-16）。
@@ -317,6 +357,7 @@ window.__ModuleLoader__.load({
 			'html[' + SKIN_ATTR + '] [class*="_projectRow"][class*="_selected"],',
 			'html[' + SKIN_ATTR + '] [class*="_panelRow"][class*="_panelActive"]{',
 			'  box-shadow: inset 2px 0 0 var(--dsh-ote-accent);',
+			'  transition: box-shadow 0.2s ease;',
 			'}',
 
 			/* §7.14 步骤行与工具卡：面板底色分层，不再画描边。 */
@@ -533,6 +574,69 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
+		 * Composer typing glow (owner request, 2026-10-16).
+		 *
+		 * The component sheet floors the glow for hover and focus through
+		 * `--ote-floor`; this half feeds the typing component `--ote-typed`
+		 * (0 to 0.55) from the keystroke rate of the trailing second, and lets
+		 * it decay on a 200ms tick so the glow fades out instead of snapping.
+		 * The card is looked up lazily by its stable data attribute; when the
+		 * host DOM or these DOM APIs are not there the effect stays inert, so
+		 * it is safe to run under the test harness's fake document.
+		 *
+		 * @returns a disposer that drops the listener and the decay timer.
+		 */
+		function installTypingGlow() {
+			if (typeof document === 'undefined') return function () {};
+			if (typeof document.addEventListener !== 'function' || typeof document.querySelector !== 'function') {
+				return function () {};
+			}
+
+			var strokes = []; /* keydown timestamps inside the trailing second */
+			var card = null;  /* lazily found composer card element */
+			var typed = 0;    /* the value we last eased towards */
+			var written = ''; /* last value pushed onto the card, to skip churn */
+
+			function onKeydown(event) {
+				var node = event && event.target;
+				if (node == null || typeof node.closest !== 'function') return;
+				if (node.closest('[data-composer-input]') == null) return;
+				var now = Date.now();
+				strokes.push(now);
+				while (strokes.length > 0 && now - strokes[0] > 1000) strokes.shift();
+			}
+
+			document.addEventListener('keydown', onKeydown, true);
+
+			var timer = null;
+			if (typeof setInterval === 'function') {
+				timer = setInterval(function () {
+					var now = Date.now();
+					while (strokes.length > 0 && now - strokes[0] > 1000) strokes.shift();
+					/* speed = strokes per second; 12 cps pins the typing half at .55 */
+					var target = Math.min(0.55, (strokes.length / 12) * 0.55);
+					/* ease down geometrically when typing stops, snap up when it speeds */
+					typed = Math.max(target, typed * 0.6);
+					if (typed < 0.005) typed = 0;
+					var value = typed.toFixed(3);
+					if (value === written) return;
+					if (card === null || card === undefined || card.isConnected === false) {
+						card = document.querySelector('[data-composer-card="true"]');
+					}
+					if (card !== null && card !== undefined && card.style !== undefined && typeof card.style.setProperty === 'function') {
+						card.style.setProperty('--ote-typed', value);
+						written = value;
+					}
+				}, 200);
+			}
+
+			return function () {
+				if (timer !== null && typeof clearInterval === 'function') clearInterval(timer);
+				document.removeEventListener('keydown', onKeydown, true);
+			};
+		}
+
+		/**
 		 * Browser-half entry point.
 		 * @param ctx - cordis client context (needs `effect`; `theme` optional).
 		 */
@@ -556,6 +660,7 @@ window.__ModuleLoader__.load({
 				},
 				'ote-skin: third-party plugin alignment'
 			);
+			ctx.effect(installTypingGlow, 'ote-skin: composer typing glow');
 		}
 
 		exports.apply = apply;

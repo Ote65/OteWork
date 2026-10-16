@@ -165,8 +165,8 @@ function boot() {
 const names = (rows) => rows.map((r) => r.name)
 const sections = (rows) => rows.map((r) => r.section ?? null)
 
-// ── level 0: the category list ──────────────────────────────────────────────
-console.log('\nlevel 0 — categories, not a flat dump')
+// ── level 0: one flat list, commands pinned on top ─────────────────────────
+console.log('\nlevel 0 — flat list, commands pinned on top')
 {
   const world = boot()
   console.log(`  inject = ${JSON.stringify(world.plugin.inject)}`)
@@ -175,16 +175,15 @@ console.log('\nlevel 0 — categories, not a flat dump')
   check('the group title is suppressed on the command source', world.commandSource.showGroupTitle, false)
 
   const rows = await world.commandSource.candidates({ sessionId: 's1' }, REQ)
-  check('one row per category', names(rows), ['Skills', 'MCP', 'Commands'])
-  check('categories carry no section heading', sections(rows), [null, null, null])
-  check('categories are drillable', rows.map((r) => r.drill), [true, true, true])
-  check('the skill count is the real catalog size', rows[0].description, '3 items')
-  check('the MCP count names servers and tools', rows[1].description, '1 servers · 2 tools')
-  check('the command count', rows[2].description, '2 items')
-
-  check('drilling skills writes the namespace token', world.commandSource.onPick({ candidate: rows[0], position: 'leading' }), { text: '/skills/', continue: true })
-  check('drilling mcp writes its token', world.commandSource.onPick({ candidate: rows[1], position: 'leading' }), { text: '/mcp/', continue: true })
-  check('an inline drill is rescued with a leading space', world.commandSource.onPick({ candidate: rows[0], position: 'inline' }), { text: ' /skills/', continue: true })
+  check('the whole flat roster', names(rows), ['compact', 'plan', 'jest', 'mermaid', 'vitest', 'echo', 'add'])
+  check('commands lead the list', names(rows).slice(0, 2), ['compact', 'plan'])
+  check('commands carry no section heading', sections(rows).slice(0, 2), [null, null])
+  check('skills follow under their heading', sections(rows).slice(2, 5), ['Skills', 'Skills', 'Skills'])
+  check('MCP tools close the list under theirs', sections(rows).slice(5), ['MCP', 'MCP'])
+  check('no row is a drill row any more', rows.some((r) => r.drill === true), false)
+  check('a skill pick writes the literal token', world.commandSource.onPick({ candidate: rows[2], position: 'leading' }), { text: '/jest ' })
+  check('an MCP pick writes the exact wire name', world.commandSource.onPick({ candidate: rows[5], position: 'leading' }), { text: 'mcp__everything__echo ' })
+  check('a command pick still delegates', world.commandSource.onPick({ candidate: rows[0], position: 'leading' }), { claim: { name: 'compact' } })
 
   const before = fetchCount
   await world.commandSource.candidates({ sessionId: 's1' }, REQ)
@@ -198,6 +197,7 @@ console.log('\nlevel 1 — skills/')
   const rows = await world.commandSource.candidates({ sessionId: 's1' }, at('skills/'))
   check('a back row comes first', rows[0].name, '← Back')
   check('the back row writes a bare trigger', world.commandSource.onPick({ candidate: rows[0], position: 'leading' }), { text: '/', continue: true })
+  check('an inline back row is rescued with a leading space', world.commandSource.onPick({ candidate: rows[0], position: 'inline' }), { text: ' /', continue: true })
   check('every skill is listed, uncapped', names(rows).slice(1), ['jest', 'mermaid', 'vitest'])
   check('the list sits under one heading', sections(rows), [null, 'Skills', 'Skills', 'Skills'])
   check('a skill keeps its shipped label', rows[2].label, 'Mermaid')
@@ -232,14 +232,16 @@ console.log('\nlevel 1 — mcp/')
   check('typing inside the level filters it', names(filtered).slice(1), ['add'])
 }
 
-// ── free text: the flat search the menu always had ─────────────────────────
+// ── free text: the flat search, in the same shape as level 0 ───────────────
 console.log('\nfree text — a flat search across categories')
 {
   const world = boot()
   const rows = await world.commandSource.candidates({ sessionId: 's1' }, at('a'))
-  check('sections are grouped in the configured order', sections(rows), ['Skills', 'MCP', 'MCP', 'Commands', 'Commands'])
-  check('every category contributes', [...new Set(sections(rows))], ['Skills', 'MCP', 'Commands'])
-  check('a prefix match on a tool name ranks first', names(rows).slice(1, 3), ['add', 'echo'])
+  check('the hits keep the level 0 shape', names(rows), ['compact', 'plan', 'mermaid', 'add', 'echo'])
+  check('commands lead, unsectioned', sections(rows).slice(0, 2), [null, null])
+  check('sections follow in the level 0 order', sections(rows), [null, null, 'Skills', 'MCP', 'MCP'])
+  check('every category contributes', [...new Set(sections(rows))], [null, 'Skills', 'MCP'])
+  check('a prefix match on a tool name ranks first', names(rows).slice(3), ['add', 'echo'])
 
   const none = await world.commandSource.candidates({ sessionId: 's1' }, at('zzz'))
   check('an unmatched query returns nothing, so the menu closes', none, [])
@@ -251,7 +253,8 @@ console.log('\ndegraded — no host route')
   const world = boot()
   fetchImpl = async () => ({ ok: false, status: 500, json: async () => ({}) })
   const rows = await world.commandSource.candidates({ sessionId: 's1' }, REQ)
-  check('the MCP category disappears', names(rows), ['Skills', 'Commands'])
+  check('the MCP rows disappear', names(rows), ['compact', 'plan', 'jest', 'mermaid', 'vitest'])
+  check('commands and skills keep the flat shape', sections(rows), [null, null, 'Skills', 'Skills', 'Skills'])
   const mcp = await world.commandSource.candidates({ sessionId: 's1' }, at('mcp/'))
   check('opening it anyway explains itself', [mcp[0].name, mcp[1].name], ['← Back', 'No MCP server configured'])
   check('the explanation row is not pickable', world.commandSource.onPick({ candidate: mcp[1], position: 'leading' }), 'handled')
@@ -264,19 +267,20 @@ console.log('\ndegraded — no MCP server configured')
   const world = boot()
   fetchImpl = async () => ({ ok: true, json: async () => ({ ok: true, sections: ['skills', 'mcp', 'commands'], servers: [], tools: [] }) })
   const rows = await world.commandSource.candidates({ sessionId: 's1' }, REQ)
-  check('the MCP category still lists, with the gap stated', rows[1].description, 'No MCP server configured')
+  check('an empty roster simply contributes no rows', rows.some((r) => r.section === 'MCP'), false)
+  check('commands and skills still render', names(rows), ['compact', 'plan', 'jest', 'mermaid', 'vitest'])
   fetchImpl = async () => ({ ok: true, json: async () => mcpBody })
 }
 
-// ── the configured order drives both levels ───────────────────────────────
-console.log('\nconfig — category order')
+// ── the flat layout is fixed: commands pinned, skills then MCP ─────────────
+console.log('\nconfig — commands stay pinned whatever the order says')
 {
   const world = boot()
   fetchImpl = async () => ({ ok: true, json: async () => ({ ...mcpBody, sections: ['commands', 'mcp', 'skills'] }) })
   const rows = await world.commandSource.candidates({ sessionId: 's1' }, REQ)
-  check('level 0 follows the configured order', names(rows), ['Commands', 'MCP', 'Skills'])
+  check('level 0 keeps the fixed flat order', names(rows), ['compact', 'plan', 'jest', 'mermaid', 'vitest', 'echo', 'add'])
   const search = await world.commandSource.candidates({ sessionId: 's1' }, at('a'))
-  check('the search sections follow it too', [...new Set(sections(search))], ['Commands', 'MCP', 'Skills'])
+  check('the search follows the same shape', sections(search), [null, null, 'Skills', 'MCP', 'MCP'])
   fetchImpl = async () => ({ ok: true, json: async () => mcpBody })
 }
 
@@ -292,7 +296,7 @@ console.log('\nlifecycle')
   world.inputTriggers.registerSource(world.commandSource)
   world.inputTriggers.registerSource(world.skillSource)
   const rows = await world.commandSource.candidates({ sessionId: 's1' }, REQ)
-  check('late-registered sources are decorated too', names(rows), ['Skills', 'MCP', 'Commands'])
+  check('late-registered sources are decorated too', names(rows), ['compact', 'plan', 'jest', 'mermaid', 'vitest', 'echo', 'add'])
   check('the late source was wrapped', world.commandSource.candidates !== shippedCommand, true)
 
   for (const dispose of world.effects) if (typeof dispose === 'function') dispose()
@@ -354,6 +358,233 @@ console.log('\nlauncher search — typing inside the + menu')
   for (const dispose of world.effects) if (typeof dispose === 'function') dispose()
   check('disposal restores the shipped track', controller.track !== wrapped, true)
   check('disposal restores the shipped sessionOf', world.inputTriggers.sessionOf === Object.getPrototypeOf(world.inputTriggers).sessionOf, false)
+}
+
+// ── the DOM layer: collapsible Skills / MCP blocks on the shipped menu ─────
+/** The handful of element APIs the DOM layer touches, no more. */
+class FakeEl {
+  constructor(tag) {
+    this.tagName = tag.toUpperCase()
+    this.nodeType = 1
+    this.attributes = new Map()
+    this.childNodes = []
+    this.parentNode = null
+    this.style = {}
+    this.listeners = new Map()
+    this.value = ''
+    this._text = ''
+  }
+  get className() { return this.attributes.get('class') ?? '' }
+  set className(value) { this.attributes.set('class', String(value)) }
+  get textContent() { return this._text === '' ? this.childNodes.map((c) => c.textContent).join('') : this._text }
+  set textContent(value) { this._text = String(value); this.childNodes = [] }
+  setAttribute(name, value) { this.attributes.set(name, String(value)) }
+  getAttribute(name) { return this.attributes.has(name) ? this.attributes.get(name) : null }
+  removeAttribute(name) { this.attributes.delete(name) }
+  get firstChild() { return this.childNodes.length > 0 ? this.childNodes[0] : null }
+  get nextSibling() {
+    if (this.parentNode === null) return null
+    const kids = this.parentNode.childNodes
+    const at = kids.indexOf(this)
+    return at >= 0 && at + 1 < kids.length ? kids[at + 1] : null
+  }
+  appendChild(node) {
+    if (node.parentNode !== null) node.parentNode.removeChild(node)
+    node.parentNode = this
+    this.childNodes.push(node)
+    return node
+  }
+  insertBefore(node, ref) {
+    if (node.parentNode !== null) node.parentNode.removeChild(node)
+    const at = ref === null || ref === undefined ? this.childNodes.length : this.childNodes.indexOf(ref)
+    this.childNodes.splice(at < 0 ? this.childNodes.length : at, 0, node)
+    node.parentNode = this
+    return node
+  }
+  removeChild(node) {
+    const at = this.childNodes.indexOf(node)
+    if (at >= 0) { this.childNodes.splice(at, 1); node.parentNode = null }
+    return node
+  }
+  addEventListener(type, fn) {
+    const list = this.listeners.get(type) ?? []
+    list.push(fn)
+    this.listeners.set(type, list)
+  }
+  fire(type) { (this.listeners.get(type) ?? []).forEach((fn) => fn({ target: this })) }
+  matches(selector) { return matchSelector(this, selector) }
+  querySelector(selector) {
+    for (const kid of this.childNodes) {
+      if (kid.matches(selector)) return kid
+      const hit = kid.querySelector(selector)
+      if (hit !== null) return hit
+    }
+    return null
+  }
+  querySelectorAll(selector) {
+    const found = []
+    for (const kid of this.childNodes) {
+      if (kid.matches(selector)) found.push(kid)
+      found.push(...kid.querySelectorAll(selector))
+    }
+    return found
+  }
+}
+
+/** `[attr]`, `[attr="v"]` and `[attr*="v"]` — everything the DOM layer asks for. */
+function matchSelector(el, selector) {
+  const m = /^\[([\w-]+)(?:([*]?=)"([^"]*)")?\]$/.exec(selector)
+  if (m === null) return false
+  const actual = el.getAttribute(m[1])
+  if (actual === null) return false
+  if (m[2] === undefined) return true
+  return m[2] === '=' ? actual === m[3] : actual.includes(m[3])
+}
+
+function makeFakeDoc() {
+  const head = new FakeEl('head')
+  const body = new FakeEl('body')
+  return {
+    head,
+    body,
+    createElement: (tag) => new FakeEl(tag),
+    querySelector(selector) {
+      if (head.matches(selector)) return head
+      if (body.matches(selector)) return body
+      return head.querySelector(selector) ?? body.querySelector(selector)
+    },
+    querySelectorAll(selector) { return [...head.querySelectorAll(selector), ...body.querySelectorAll(selector)] },
+  }
+}
+
+/** A menu row exactly the way MenuView renders one: `_item` button, `_itemName` span. */
+const fakeRow = (name) => {
+  const button = new FakeEl('button')
+  button.className = '_item_h4sh'
+  const label = new FakeEl('span')
+  label.className = '_itemName_h4sh'
+  label.textContent = name
+  button.appendChild(label)
+  return button
+}
+const fakeSection = (text) => {
+  const el = new FakeEl('div')
+  el.className = '_sectionTitle_9f1c'
+  el.setAttribute('role', 'presentation')
+  el.textContent = text
+  return el
+}
+
+/** Render the level 0 menu the shipped MenuView would build from the flat rows. */
+function renderMenu(doc) {
+  const listbox = new FakeEl('div')
+  listbox.setAttribute('role', 'listbox')
+  listbox.appendChild(fakeRow('compact'))
+  listbox.appendChild(fakeRow('plan'))
+  listbox.appendChild(fakeSection('Skills'))
+  listbox.appendChild(fakeRow('jest'))
+  listbox.appendChild(fakeRow('mermaid'))
+  listbox.appendChild(fakeRow('vitest'))
+  listbox.appendChild(fakeSection('MCP'))
+  listbox.appendChild(fakeRow('echo'))
+  listbox.appendChild(fakeRow('add'))
+  doc.body.appendChild(listbox)
+  return listbox
+}
+
+/** Boot a world whose window carries a fake document and observer. */
+function bootDom() {
+  const world = makeWorld()
+  world.inputTriggers.registerSource(world.commandSource)
+  world.inputTriggers.registerSource(world.skillSource)
+  const observers = []
+  globalThis.MutationObserver = class {
+    constructor(cb) { observers.push(this); this.cb = cb }
+    observe() { this.observing = true }
+    disconnect() { this.observing = false; this.disconnected = true }
+  }
+  const plugin = loadPlugin()
+  const doc = makeFakeDoc()
+  window.document = doc
+  plugin.apply(world.ctx)
+  return { ...world, doc, observers }
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+console.log('\ndom — collapsible skills and MCP groups')
+{
+  const world = bootDom()
+  check('the stylesheet is injected once', world.doc.querySelectorAll('[id="dsh-plus-menu/css"]').length, 1)
+  check('the sheet is tagged to the plugin', world.doc.querySelector('[id="dsh-plus-menu/css"]').getAttribute('data-plugin'), 'dsh-plus-menu')
+
+  const listbox = renderMenu(world.doc)
+  world.observers[0].cb([])
+  await sleep(200)
+
+  const titles = listbox.querySelectorAll('[class*="_sectionTitle"]')
+  check('both headings became toggles', titles.map((el) => el.getAttribute('data-pm-toggle') !== null), [true, true])
+  check('the headings keep their shipped class', titles.map((el) => el.className.includes('_sectionTitle')), [true, true])
+  check('both groups start collapsed', titles.map((el) => el.getAttribute('aria-expanded')), ['false', 'false'])
+  const groups = listbox.querySelectorAll('[data-pm-group]')
+  check('one container per heading', groups.length, 2)
+  check('the skills rows moved into its block', groups[0].querySelector('[data-pm-body]').childNodes.length, 3)
+  check('the mcp rows moved into its block', groups[1].querySelector('[data-pm-body]').childNodes.length, 2)
+  check('commands stay flat at the top', listbox.childNodes.slice(0, 2).map((n) => n.tagName), ['BUTTON', 'BUTTON'])
+
+  world.observers[0].cb([])
+  await sleep(200)
+  check('a second pass does not re-wrap', listbox.querySelectorAll('[data-pm-group]').length, 2)
+  check('nor nests containers', groups[0].querySelector('[data-pm-body]').querySelectorAll('[data-pm-group]').length, 0)
+
+  titles[0].fire('click')
+  check('expanding clears the collapsed marker', titles[0].getAttribute('data-pm-collapsed'), null)
+  check('aria-expanded follows', titles[0].getAttribute('aria-expanded'), 'true')
+  const skillsBody = groups[0].querySelector('[data-pm-body]')
+  const input = skillsBody.querySelector('[data-pm-search]')
+  check('the skills block gains a search box', input !== null, true)
+  check('the placeholder is localized', input.getAttribute('placeholder'), 'Search skills…')
+  check('the mcp block gets none', groups[1].querySelector('[data-pm-search]'), null)
+
+  input.value = 'mer'
+  input.fire('input')
+  const skillRows = skillsBody.childNodes.filter((n) => n.tagName === 'BUTTON')
+  check('non-matching rows hide', skillRows.map((r) => r.style.display), ['none', '', 'none'])
+  input.value = ''
+  input.fire('input')
+  check('clearing restores every row', skillRows.map((r) => r.style.display), ['', '', ''])
+
+  // A React re-render: the whole list is replaced, the Maps must restore state.
+  input.value = 'mer'
+  input.fire('input')
+  world.doc.body.removeChild(listbox)
+  const fresh = renderMenu(world.doc)
+  world.observers[0].cb([])
+  await sleep(200)
+  const newTitles = fresh.querySelectorAll('[class*="_sectionTitle"]')
+  check('the skills group reopens from the Map', newTitles[0].getAttribute('aria-expanded'), 'true')
+  check('the mcp group stays collapsed', newTitles[1].getAttribute('aria-expanded'), 'false')
+  const newBody = fresh.querySelector('[data-pm-group]').querySelector('[data-pm-body]')
+  check('the search text is restored', newBody.querySelector('[data-pm-search]').value, 'mer')
+  check('and the filter is re-applied', newBody.childNodes.filter((n) => n.tagName === 'BUTTON').map((r) => r.style.display), ['none', '', 'none'])
+
+  for (const dispose of world.effects) if (typeof dispose === 'function') dispose()
+  check('the observer is disconnected', world.observers[0].disconnected, true)
+  check('groups are unwrapped', fresh.querySelectorAll('[data-pm-group]').length, 0)
+  check('the rows return in order', fresh.childNodes.map((n) => n.tagName === 'BUTTON' ? n.querySelector('[class*="_itemName"]').textContent : n.textContent), ['compact', 'plan', 'Skills', 'jest', 'mermaid', 'vitest', 'MCP', 'echo', 'add'])
+  check('the heading attributes are stripped', newTitles[0].getAttribute('data-pm-toggle'), null)
+  check('the search box is gone', fresh.querySelector('[data-pm-search]'), null)
+  check('the stylesheet is removed', world.doc.querySelector('[id="dsh-plus-menu/css"]'), null)
+}
+
+console.log('\ndom — a pass without an open menu is a no-op')
+{
+  const world = bootDom()
+  world.observers[0].cb([])
+  await sleep(200)
+  check('nothing is added to the body', world.doc.body.childNodes.length, 0)
+  for (const dispose of world.effects) if (typeof dispose === 'function') dispose()
+  check('teardown still removes the sheet', world.doc.querySelector('[id="dsh-plus-menu/css"]'), null)
 }
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`)

@@ -8,13 +8,22 @@
  *
  * This half does not repaint the composer and does not replace the menu. It
  * decorates the two shipped `/` sources in place, and owns one grouped row
- * list with three levels:
+ * list:
  *
- *   empty query      → one row per category, each drillable, with its count
+ *   empty query      → the shipped commands pinned on top with no section,
+ *                      then the skill rows and the MCP rows under their own
+ *                      section headings
  *   `skills/…`       → that category only, filtered by what follows the token
  *   `mcp/…`          → MCP tools grouped under their server's heading
  *   `commands/…`     → the shipped command rows
- *   any other text   → a flat search across all three, as sections
+ *   any other text   → a flat search across all three, same shape as above
+ *
+ * A DOM layer rides on top of the shipped MenuView: a throttled
+ * MutationObserver turns the Skills and MCP section headings into in-place
+ * collapsible blocks (both start collapsed) and puts a minimal search box on
+ * top of the skills list. The headings keep their shipped classes; the
+ * wrapping is keyed off data attributes and this plugin's own stylesheet, and
+ * every pass is idempotent because React re-renders the menu at any moment.
  *
  * Drilling writes a namespace token into the draft (`/skills/`), which is the
  * same contract the shipped `@` picker uses to enter a directory: the token
@@ -59,8 +68,7 @@ window.__ModuleLoader__.load({
 			'section.skills': '技能',
 			'section.mcp': 'MCP',
 			'section.commands': '命令',
-			'count.items': '{n} 项',
-			'count.mcp': '{servers} 个服务器 · {tools} 个工具',
+			'search.skills': '搜索技能…',
 			'back': '← 返回',
 			'back.hint': '全部分类',
 			'mcp.empty': '未配置 MCP 服务器',
@@ -71,18 +79,239 @@ window.__ModuleLoader__.load({
 			'section.skills': 'Skills',
 			'section.mcp': 'MCP',
 			'section.commands': 'Commands',
-			'count.items': '{n} items',
-			'count.mcp': '{servers} servers · {tools} tools',
+			'search.skills': 'Search skills…',
 			'back': '← Back',
 			'back.hint': 'All categories',
 			'mcp.empty': 'No MCP server configured',
 			'mcp.emptyHint': 'Add @deepseek-ai/dsh-mcp-client rows to the profile cordis.patch.yml',
 		};
 
+		/** Throttle window for the menu observer, in milliseconds. */
+		var MENU_THROTTLE_MS = 100;
+
+		/**
+		 * The plugin's own stylesheet for the collapsible groups. Unlike the
+		 * host skin, layout properties are allowed here: this sheet only ever
+		 * matches elements carrying this plugin's data attributes.
+		 */
+		var MENU_CSS = [
+			'[data-pm-toggle]{cursor:pointer;user-select:none;position:relative;padding-right:1.2em;}',
+			'[data-pm-toggle]::after{content:"";position:absolute;right:.15em;top:50%;width:.45em;height:.45em;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;opacity:.55;transform:translateY(-75%) rotate(45deg);transition:transform .25s ease-out;}',
+			'[data-pm-toggle][data-pm-collapsed]::after{transform:translateY(-25%) rotate(-45deg);}',
+			'[data-pm-group]{display:grid;grid-template-rows:1fr;opacity:1;transition:grid-template-rows .25s ease-out,opacity .25s ease-out;}',
+			'[data-pm-toggle][data-pm-collapsed]+[data-pm-group]{grid-template-rows:0fr;opacity:0;}',
+			'[data-pm-group]>[data-pm-body]{overflow:hidden;min-height:0;}',
+			'[data-pm-group] [class*="_item"]{transition:background-color .15s ease-out;}',
+			'[data-pm-group] [class*="_item"]:hover{background-color:rgba(128,128,128,.12);}',
+			'[data-pm-search]{display:block;box-sizing:border-box;width:100%;margin:.2em 0 .35em;padding:.3em .15em;background:transparent;border:none;border-bottom:1px solid rgba(128,128,128,.35);outline:none;color:inherit;font:inherit;font-size:.92em;transition:border-color .2s ease-out;}',
+			'[data-pm-search]:focus{border-bottom-color:currentColor;}',
+			'[data-pm-search]::placeholder{color:inherit;opacity:.45;}',
+		].join('\n');
+
+		/**
+		 * Turn the Skills and MCP section headings the shipped MenuView renders
+		 * into in-place collapsible blocks, with a minimal search box on top of
+		 * the skills list. Collapse and search state lives in Maps keyed by the
+		 * heading text, so a React re-render re-wraps the fresh DOM with the
+		 * user's last state restored.
+		 * @param t - the localized dictionary reader.
+		 * @returns a disposer that unwraps everything this layer added.
+		 */
+		function startMenuGroups(t) {
+			var doc;
+			try {
+				doc = window.document;
+			} catch (error) {
+				doc = undefined;
+			}
+			if (doc === undefined || doc === null || typeof doc.querySelectorAll !== 'function' || typeof MutationObserver !== 'function') {
+				return function () {};
+			}
+
+			/** Heading text → whether it is collapsed; absent means the default. */
+			var collapsed = new Map();
+			/** Heading text → the skills search box's last text. */
+			var queries = new Map();
+			/** Pending throttle timer id, 0 when nothing is scheduled. */
+			var timer = 0;
+
+			/**
+			 * Read one attribute as a string, tolerating a missing one.
+			 * @param node - the element.
+			 * @param name - the attribute name.
+			 * @returns the value, or an empty string.
+			 */
+			function attr(node, name) {
+				var value = node.getAttribute(name);
+				return value === null || value === undefined ? '' : String(value);
+			}
+
+			/** Whether one node is an element whose class contains `needle`. */
+			function hasClass(node, needle) {
+				return node !== null && node !== undefined && node.nodeType === 1 && attr(node, 'class').indexOf(needle) >= 0;
+			}
+
+			/** A menu row button as the shipped MenuView renders it. */
+			function isItem(node) {
+				return hasClass(node, '_item');
+			}
+
+			/** A section or group heading, the boundary of one collapsible block. */
+			function isHeading(node) {
+				return hasClass(node, '_sectionTitle') || hasClass(node, '_groupTitle');
+			}
+
+			/** Set the collapsed visuals on one wrapped heading. */
+			function setCollapsed(titleEl, isCollapsed) {
+				if (isCollapsed) titleEl.setAttribute('data-pm-collapsed', '');
+				else titleEl.removeAttribute('data-pm-collapsed');
+				titleEl.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+			}
+
+			/** Hide every row whose item name does not contain the needle. */
+			function filterRows(body, text) {
+				var needle = String(text).toLowerCase();
+				var kids = body.childNodes;
+				for (var i = 0; i < kids.length; i++) {
+					if (!isItem(kids[i])) continue;
+					var nameEl = kids[i].querySelector('[class*="_itemName"]');
+					var name = nameEl === null || nameEl === undefined ? '' : String(nameEl.textContent === undefined ? '' : nameEl.textContent).toLowerCase();
+					kids[i].style.display = needle === '' || name.indexOf(needle) >= 0 ? '' : 'none';
+				}
+			}
+
+			/** Add the skills search box to one expanded group, restoring its text. */
+			function addSearch(body, heading) {
+				if (body.querySelector('[data-pm-search]') !== null) return;
+				var input = doc.createElement('input');
+				input.setAttribute('data-pm-search', '');
+				input.setAttribute('type', 'text');
+				input.setAttribute('placeholder', t('search.skills'));
+				var saved = queries.get(heading);
+				input.value = saved === undefined ? '' : saved;
+				body.insertBefore(input, body.firstChild);
+				input.addEventListener('input', function () {
+					queries.set(heading, input.value);
+					filterRows(body, input.value);
+				});
+				if (input.value !== '') filterRows(body, input.value);
+			}
+
+			/** Wrap one heading and its following rows into a collapsible block. */
+			function wrap(titleEl, heading) {
+				if (titleEl.getAttribute('data-pm-toggle') !== null) return;
+				var parent = titleEl.parentNode;
+				if (parent === null || parent === undefined) return;
+				var rows = [];
+				var node = titleEl.nextSibling;
+				while (node !== null && node !== undefined && !isHeading(node)) {
+					if (isItem(node)) rows.push(node);
+					node = node.nextSibling;
+				}
+				var group = doc.createElement('div');
+				group.setAttribute('data-pm-group', '');
+				var body = doc.createElement('div');
+				body.setAttribute('data-pm-body', '');
+				parent.insertBefore(group, titleEl.nextSibling);
+				group.appendChild(body);
+				for (var i = 0; i < rows.length; i++) body.appendChild(rows[i]);
+				titleEl.setAttribute('data-pm-toggle', '');
+				var isCollapsed = collapsed.get(heading) === undefined ? true : collapsed.get(heading) === true;
+				setCollapsed(titleEl, isCollapsed);
+				titleEl.addEventListener('click', function () {
+					var wasCollapsed = titleEl.getAttribute('data-pm-collapsed') !== null;
+					collapsed.set(heading, !wasCollapsed);
+					setCollapsed(titleEl, !wasCollapsed);
+					if (wasCollapsed && heading === t('section.skills')) addSearch(body, heading);
+				});
+				if (!isCollapsed && heading === t('section.skills')) addSearch(body, heading);
+			}
+
+			/** One idempotent pass over the currently open menu, if any. */
+			function enhance() {
+				var listbox = doc.querySelector('[role="listbox"]');
+				if (listbox === null || listbox === undefined) return;
+				var titles = listbox.querySelectorAll('[class*="_sectionTitle"]');
+				var wanted = [t('section.skills'), t('section.mcp')];
+				for (var i = 0; i < titles.length; i++) {
+					var text = String(titles[i].textContent === undefined ? '' : titles[i].textContent).trim();
+					if (wanted.indexOf(text) < 0) continue;
+					wrap(titles[i], text);
+				}
+			}
+
+			var sheet = doc.querySelector('[id="dsh-plus-menu/css"]');
+			if (sheet === null || sheet === undefined) {
+				sheet = doc.createElement('style');
+				sheet.setAttribute('id', 'dsh-plus-menu/css');
+				sheet.setAttribute('data-plugin', 'dsh-plus-menu');
+				sheet.textContent = MENU_CSS;
+				var host = doc.head !== undefined && doc.head !== null ? doc.head : doc.body;
+				host.appendChild(sheet);
+			}
+
+			var observer = new MutationObserver(function () {
+				if (timer !== 0) return;
+				timer = setTimeout(function () {
+					timer = 0;
+					try {
+						enhance();
+					} catch (error) {
+						console.error('[plus-menu] menu grouping pass failed:', error);
+					}
+				}, MENU_THROTTLE_MS);
+			});
+			try {
+				observer.observe(doc.body, { childList: true, subtree: true });
+			} catch (error) {
+				console.error('[plus-menu] could not observe the menu DOM:', error);
+			}
+			try {
+				enhance();
+			} catch (error) {
+				console.error('[plus-menu] menu grouping pass failed:', error);
+			}
+
+			return function dispose() {
+				try {
+					if (timer !== 0) clearTimeout(timer);
+					observer.disconnect();
+					var groups = doc.querySelectorAll('[data-pm-group]');
+					for (var i = 0; i < groups.length; i++) {
+						var group = groups[i];
+						var parent = group.parentNode;
+						if (parent === null || parent === undefined) continue;
+						var body = group.querySelector('[data-pm-body]');
+						var ref = group.nextSibling;
+						if (body !== null && body !== undefined) {
+							var kids = [...body.childNodes];
+							for (var j = 0; j < kids.length; j++) {
+								if (kids[j].getAttribute !== undefined && kids[j].getAttribute('data-pm-search') !== null) continue;
+								parent.insertBefore(kids[j], ref);
+							}
+						}
+						parent.removeChild(group);
+					}
+					var toggles = doc.querySelectorAll('[data-pm-toggle]');
+					for (var k = 0; k < toggles.length; k++) {
+						toggles[k].removeAttribute('data-pm-toggle');
+						toggles[k].removeAttribute('data-pm-collapsed');
+						toggles[k].removeAttribute('aria-expanded');
+					}
+					var injected = doc.querySelector('[id="dsh-plus-menu/css"]');
+					if (injected !== null && injected !== undefined && injected.parentNode !== null && injected.parentNode !== undefined) injected.parentNode.removeChild(injected);
+					collapsed.clear();
+					queries.clear();
+				} catch (error) {
+					console.error('[plus-menu] menu grouping teardown failed:', error);
+				}
+			};
+		}
+
 		/**
 		 * Client plugin body: decorate the shipped `/` sources so the composer's
-		 * `+` menu becomes a two-level, filterable catalog of skills, MCP tools
-		 * and commands.
+		 * `+` menu becomes a flat, filterable catalog of commands, skills and
+		 * MCP tools, with the skills and MCP sections collapsible in place.
 		 * @param ctx - client root context.
 		 */
 		function apply(ctx) {
@@ -234,15 +463,6 @@ window.__ModuleLoader__.load({
 			}
 
 			/**
-			 * Read the configured category order from a host answer.
-			 * @param host - the host answer, or undefined.
-			 * @returns the order to render.
-			 */
-			function orderOf(host) {
-				return host !== undefined && Array.isArray(host.sections) && host.sections.length > 0 ? host.sections : DEFAULT_ORDER;
-			}
-
-			/**
 			 * Match one namespace token at the head of a query.
 			 * @param query - the raw query.
 			 * @returns the category and its remaining filter text, or undefined.
@@ -283,35 +503,21 @@ window.__ModuleLoader__.load({
 			}
 
 			/**
-			 * Level 0: one drillable row per category, with its count. MCP is omitted
-			 * entirely when the host route is unreachable, because a category that
-			 * cannot open is worse than a category that is absent.
+			 * Level 0: one flat list. The shipped commands are pinned on top with
+			 * no section, so they are never folded away; the skill rows and the
+			 * MCP rows follow under their own headings, which the DOM layer
+			 * renders as collapsible blocks. MCP is omitted entirely when the
+			 * host route is unreachable, because a group that cannot open is
+			 * worse than a group that is absent.
 			 * @param commands - the shipped command rows.
 			 * @param skills - the shipped skill rows.
 			 * @param host - the host answer, or undefined.
-			 * @returns the category rows.
+			 * @returns the rows.
 			 */
-			function categoryRows(commands, skills, host) {
-				var order = orderOf(host);
-				var rows = [];
-				for (var i = 0; i < order.length; i++) {
-					var name = order[i];
-					var description;
-					if (name === 'skills') description = t('count.items', { n: skills.length });
-					else if (name === 'commands') description = t('count.items', { n: commands.length });
-					else if (name === 'mcp') {
-						if (host === undefined) continue;
-						var servers = Array.isArray(host.servers) ? host.servers.length : 0;
-						var tools = Array.isArray(host.tools) ? host.tools.length : 0;
-						description = servers === 0 ? t('mcp.empty') : t('count.mcp', { servers: servers, tools: tools });
-					} else continue;
-					rows.push({
-						name: t('section.' + name),
-						description: description,
-						drill: true,
-						__plus: { kind: 'drill', text: '/' + NS_TOKEN[name] },
-					});
-				}
+			function flatRows(commands, skills, host) {
+				var rows = commands.slice();
+				rows = rows.concat(sectioned(skills, 'skills'));
+				if (host !== undefined) rows = rows.concat(sectioned(mcpToolRows(host), 'mcp'));
 				return rows;
 			}
 
@@ -345,27 +551,20 @@ window.__ModuleLoader__.load({
 			}
 
 			/**
-			 * A free-text query: a flat search across every category, grouped into
-			 * sections, so typing `/comp` behaves the way it always did.
-			 * @param commands - the shipped command rows.
-			 * @param skills - the shipped skill rows.
+			 * A free-text query: the same flat shape as level 0 — commands first
+			 * with no section, then skills, then MCP — so typing `/comp` keeps
+			 * behaving the way it always did, just without a heading over the
+			 * commands.
+			 * @param commands - the shipped command rows, already filtered.
+			 * @param skills - the shipped skill rows, already filtered.
 			 * @param host - the host answer, or undefined.
 			 * @param query - the raw query.
 			 * @returns the rows.
 			 */
 			function searchRows(commands, skills, host, query) {
-				var order = orderOf(host);
-				var bySection = {
-					skills: skills,
-					commands: commands,
-					mcp: host === undefined ? [] : rankMcp(mcpToolRows(host), query),
-				};
-				var rows = [];
-				for (var i = 0; i < order.length; i++) {
-					var items = bySection[order[i]];
-					if (!Array.isArray(items)) continue;
-					rows = rows.concat(sectioned(items, order[i]));
-				}
+				var rows = commands.slice();
+				rows = rows.concat(sectioned(skills, 'skills'));
+				if (host !== undefined) rows = rows.concat(sectioned(rankMcp(mcpToolRows(host), query), 'mcp'));
 				return rows;
 			}
 
@@ -390,8 +589,8 @@ window.__ModuleLoader__.load({
 				}
 
 				sources.command = src;
-				// The group title would read "Commands" over a skills list; every row
-				// this plugin returns carries its own section heading instead.
+				// The group title would read "Commands" over a skills list; the
+				// skill and MCP rows carry their own section heading instead.
 				src.showGroupTitle = false;
 
 				src.candidates = function (session, req) {
@@ -407,7 +606,7 @@ window.__ModuleLoader__.load({
 						skillRows(session, req),
 						loadHost(sessionId),
 					]).then((values) => (query === ''
-						? categoryRows(values[0], values[1], values[2])
+						? flatRows(values[0], values[1], values[2])
 						: searchRows(values[0], values[1], values[2], query)));
 				};
 
@@ -551,6 +750,10 @@ window.__ModuleLoader__.load({
 					return originalRegister.call(this, src);
 				};
 			}
+
+			// The in-place collapsible Skills / MCP blocks and the skills search
+			// box, layered on top of whatever rows the sources above return.
+			ctx.effect(() => startMenuGroups(t), 'plus-menu: collapsible section groups');
 
 			ctx.effect(() => () => {
 				if (typeof originalRegister === 'function') inputTriggers.registerSource = originalRegister;

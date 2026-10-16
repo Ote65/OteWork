@@ -113,7 +113,8 @@ node tests/run.mjs
 |---|---|
 | `ctx.theme.overrideTokens(source, overrides)` 接受「令牌名 → 具体颜色」并返回 disposer | 宿主 ThemeRuntime |
 | 令牌名与语义（`--dsw-alias-*` / `--dsw-specific-*` / `--dsw-radius-*` / `--dsw-elevation-*`） | `@deepseek-ai/dsh-client-ui-theme` |
-| 组件类名后缀 `_primary` `_button` `_composerStack` `_add` `_card` `_sessionRow` `_selected` `_panelRow` `_panelActive` `_ioCard` `_markdown` `_block` | `dsh-client-ui-*` 各自的 CSS-module |
+| 组件类名后缀 `_primary` `_button` `_composerStack` `_add` `_sessionRow` `_selected` `_panelRow` `_panelActive` `_ioCard` `_markdown` `_block` | `dsh-client-ui-*` 各自的 CSS-module |
+| 稳定 data 钩子 `[data-composer-card="true"]` / `[data-composer-input]`（辉光与打字 effect 的定位点） | DSH Web 壳 composer DOM |
 | 客户端半区经 `window.__ModuleLoader__.load({ id, factory })` 注册，`apply`/`inject` 为导出名 | 宿主 cordis Loader |
 
 任何一条变了，皮肤会**降级**而不是弄坏外壳：找不到类名就是那一条样式不生效，
