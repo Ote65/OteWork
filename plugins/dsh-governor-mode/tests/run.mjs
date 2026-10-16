@@ -968,57 +968,33 @@ async function runClient(reportFn) {
     assert(svg.props.children.length > 40, 'avatar has pixels')
   })
 
-  suite.check('the DOM avatar builder produces a 12x12 pixel svg', () => {
+  suite.check('the avatar data-URI builder paints the 12x12 pixel grid', () => {
     const internals = I()
-    const svg = internals.pixelAvatarElement('gov', 42)
-    equal(svg.tagName, 'svg', 'svg element')
-    equal(svg.getAttribute('viewBox'), '0 0 12 12', 'pixel viewbox')
-    assert(svg.children.length > 40, 'one rect per painted pixel')
-    equal(svg.children[0].tagName, 'rect', 'pixels are rects')
-    const fills = svg.children.map((node) => String(node.getAttribute('fill')))
-    equal(fills.filter((fill) => fill.startsWith('#') !== true).length, 0, 'every pixel carries a palette fill')
-    includes(fills.join(','), '#ff5500', 'governor orange present')
+    const uri = internals.pixelAvatarDataUri('gov', 42)
+    assert(uri.startsWith('data:image/svg+xml,'), 'is a data-uri')
+    const svg = decodeURIComponent(uri.slice('data:image/svg+xml,'.length))
+    assert(svg.includes('viewBox="0 0 12 12"'), 'pixel viewbox')
+    assert(svg.includes('shape-rendering="crispEdges"'), 'crisp pixels')
+    equal((svg.match(/<rect /g) ?? []).length > 40, true, 'one rect per painted pixel')
+    assert(svg.includes('#ff5500'), 'governor orange present')
+    equal(internals.GOV_ROW_AVATAR, internals.pixelAvatarDataUri('gov', 'governor'), 'row avatar is the fixed governor face')
   })
 
-  /** 一级栏工作区行：官方「文件夹 + 名称」两截的假树。 */
-  function fakeWorkspaceRow(workspaceId, title) {
-    const row = fakeEl('div')
-    const folder = fakeEl('span')
-    const icon = fakeEl('svg')
-    folder.appendChild(icon)
-    const chevron = fakeEl('span')
-    const text = fakeEl('span')
-    const label = fakeEl('span')
-    label.textContent = title
-    text.appendChild(label)
-    row.appendChild(folder)
-    row.appendChild(chevron)
-    row.appendChild(text)
-    row.setAttribute('data-row-key', 'workspace:' + workspaceId)
-    return { row, folder, icon, label }
-  }
-
-  suite.check('workspace rows swap the folder icon for the governor face + crown', () => {
+  suite.check('workspace rows are decorated in pure CSS — never by mutating React DOM', () => {
+    // 真机崩溃根因的回归锁：曾在官方 React 树里 replaceChild 换行图标，
+    // 新建会话触发侧栏重渲染时 React 协调直接崩掉整个侧栏。装饰只许走 CSS。
     const internals = I()
-    const { row, folder, icon, label } = fakeWorkspaceRow('w1', '阿尔法')
-    internals.decorateWorkspaceRow(row)
-    const avatar = folder.querySelector('.dsh-gov-avatar')
-    assert(avatar != null, 'the folder icon became the governor avatar')
-    equal(icon.parentNode, null, 'the folder svg was replaced out')
-    equal(avatar.getAttribute('width'), '100%', 'avatar fills the icon slot')
-    equal(folder.querySelectorAll('svg').length, 1, 'exactly one icon in the folder')
-    equal(label.querySelector('.dsh-gov-crown').textContent, internals.CROWN, 'crown after the name')
-    equal(row.getAttribute('data-dsh-gov-row'), 'true', 'row marked decorated')
-    // 幂等：官方重渲染后再装饰一次不会堆叠头像或徽记
-    internals.decorateWorkspaceRow(row)
-    equal(folder.children.length, 1, 'still one icon child')
-    equal(label.querySelectorAll('.dsh-gov-crown').length, 1, 'still one crown')
-    // 子树批量装饰
-    const root = fakeEl('div')
-    root.appendChild(fakeWorkspaceRow('w2', '贝塔').row)
-    root.appendChild(row)
-    internals.decorateWorkspaceRows(root)
-    equal(root.querySelectorAll('[data-dsh-gov-row]').length, 2, 'both rows decorated')
+    const css = internals.STYLESHEET
+    includes(css, '[data-row-key^="workspace:"]>*:first-child::after', 'governor avatar overlays via pseudo-element')
+    includes(css, 'data:image/svg+xml', 'avatar ships as data-uri')
+    includes(css, 'visibility:hidden', 'official folder icon is hidden, not removed')
+    includes(css, internals.CROWN, 'crown rides on a ::after content')
+    const source = readFileSync(clientPath, 'utf8')
+    equal(/\.replaceChild\(/.test(source), false, 'no node replacement anywhere')
+    equal(/\.appendChild\(/.test(source.replace(/document\.head\.appendChild\(/g, '')), false, 'the only appendChild is our own style tag')
+    equal(source.includes('document.head.appendChild('), true, 'style injection still present')
+    equal(source.includes('decorateWorkspaceRow'), false, 'the DOM decoration path is deleted')
+    equal(source.includes('pixelAvatarElement'), false, 'the DOM avatar builder is deleted')
   })
 
   suite.check('worker rows are laid out 1..4 centered, 5+ split', () => {

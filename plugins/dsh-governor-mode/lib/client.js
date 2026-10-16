@@ -2,8 +2,8 @@
  * dsh-governor-mode —— 浏览器半（v3 总督面板，建立在官方 Agent Teams 上）。
  *
  * 总督模式是默认且唯一的工作模式，做四件事，全部走官方插槽与语义令牌：
- *  1. 侧栏工作区行（捕获阶段）：行内文件夹图标换成总督像素头像、名称尾部挂总督徽记，
- *     点击行 = 总督入口：有映射开总督会话；老工作区（有会话、无映射）不建总督，
+ *  1. 侧栏工作区行（捕获阶段）：官方文件夹图标经纯 CSS 叠总督像素头像、名称尾部
+ *     经伪元素挂总督徽记（不增删替换 React 节点），点击行 = 总督入口：有映射开总督会话；老工作区（有会话、无映射）不建总督，
  *     开该工作区最近一个会话、面板显示未启用空态；零会话（新建工作区）懒建总督。
  *     右侧栏开「总督」标签页；
  *  2. 面板是官方右侧栏的一个**标签页**（与浏览器 / 文档 / 编辑器并列，顶部标签切换）：
@@ -19,7 +19,8 @@
  *     新建工作区 = 懒建总督 + 注入提示词。
  *
  * 视觉沿用总督面板设计稿：工业哑光黑绿底 + 橘高亮、12×12 手绘像素人、直角连线与数据光流。
- * 像素头像出现在总督面板与一级栏工作区行两处，官方其余原生头像/图标一个都不动。
+ * 像素头像出现在总督面板与一级栏工作区行两处（后者走 CSS data-URI），官方其余
+ * 原生头像/图标一个都不动，官方 React 树的 DOM 一个节点都不增删替换。
  *
  * @module dsh-governor-mode/client
  */
@@ -48,9 +49,8 @@ window.__ModuleLoader__.load({
     var STYLE_ID = 'dsh-governor-mode/css'
     var ROOT_ATTR = 'data-dsh-governor-mode'
     var MOUNT_ATTR = 'data-dsh-governor-mount'
-    /** 一级栏工作区行：文件夹图标换总督像素头像，名称尾部挂总督徽记。 */
+    /** 一级栏工作区行选择器：装饰全走 CSS（STYLESHEET），拦截器靠它认行。 */
     var ROW_SELECTOR = '[data-row-key^="workspace:"]'
-    var ROW_ATTR = 'data-dsh-gov-row'
     var CROWN = '\u{1F451}'
     /** 一个总督最多带 8 个手下会话。 */
     var MAX_SUB = 8
@@ -556,42 +556,38 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 像素人的 DOM 版本：侧栏工作区行要在官方 React 树里替换图标，
-     * 只能手工造节点（不可用 React），配色与网格跟面板完全同源。
+     * 像素人的 data-URI 版本：一级栏工作区行用**纯 CSS 伪元素**叠装饰，
+     * 绝不替换/增删 React 管理的 DOM 节点（此前 replaceChild 换图标正是
+     * 新建会话后侧栏重渲染时 React 协调崩溃的根因）。配色与网格跟面板同源。
      */
-    function pixelAvatarElement(kind, seed) {
+    function pixelAvatarDataUri(kind, seed) {
       var grid = pixelGrid(kind, seed)
-      var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-      svg.setAttribute('viewBox', '0 0 12 12')
-      svg.setAttribute('shape-rendering', 'crispEdges')
-      svg.setAttribute('width', '100%')
-      svg.setAttribute('height', '100%')
-      svg.setAttribute('aria-hidden', 'true')
-      svg.setAttribute('focusable', 'false')
+      var parts = []
       grid.forEach(function (row, y) {
         row.split('').forEach(function (char, x) {
           var fill = PIXEL_PALETTE[char]
           if (fill == null) return
-          var rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
-          rect.setAttribute('x', String(x))
-          rect.setAttribute('y', String(y))
-          rect.setAttribute('width', '1')
-          rect.setAttribute('height', '1')
-          rect.setAttribute('fill', fill)
-          svg.appendChild(rect)
+          parts.push('<rect x="' + x + '" y="' + y + '" width="1" height="1" fill="' + fill + '"/>')
         })
       })
-      return svg
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" shape-rendering="crispEdges">' + parts.join('') + '</svg>'
+      return 'data:image/svg+xml,' + encodeURIComponent(svg)
     }
 
     /* ====================================================================== */
     /* 样式：沿用总督面板设计稿的工业哑光配色（黑绿底 + 橘高亮）                     */
     /* ====================================================================== */
 
+    /* 一级栏行的总督头像：固定脸（军官帽 + 橘徽章）编成 data-URI 走 CSS 覆盖。 */
+    var GOV_ROW_AVATAR = pixelAvatarDataUri('gov', 'governor')
+
     var STYLESHEET = [
-      /* ---- 一级栏工作区行：总督像素头像 + 名称尾部徽记 ---- */
-      '.dsh-gov-avatar{display:block;width:100%;height:100%;image-rendering:pixelated}',
-      '.dsh-gov-crown{margin-left:4px;font-size:11px;opacity:.85;vertical-align:baseline}',
+      /* ---- 一级栏工作区行：纯 CSS 总督像素头像 + 名称尾部徽记（零 DOM 改动，React 安全） ---- */
+      '[data-row-key^="workspace:"]>*:first-child{position:relative}',
+      '[data-row-key^="workspace:"]>*:first-child>svg{visibility:hidden}',
+      '[data-row-key^="workspace:"]>*:first-child::after{content:"";position:absolute;inset:0;pointer-events:none;' +
+        'background:url("' + GOV_ROW_AVATAR + '") center/contain no-repeat;image-rendering:pixelated}',
+      '[data-row-key^="workspace:"]>*:nth-child(3)>:first-child::after{content:"' + CROWN + '";margin-left:4px;font-size:11px;opacity:.85}',
       /* ---- 右侧栏标签页标题（与浏览器 / 文档 / 编辑器并列的标签 chip） ---- */
       '.dsh-gov-tab-title{display:inline-flex;align-items:center;gap:4px;font-size:12px}',
 
@@ -1814,74 +1810,20 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 工作区行 = 官方「文件夹 + 名称」两截：文件夹图标换成总督像素头像，
-     * 名称尾部挂总督徽记。结构对齐官方 Rows 组件（第 1 个子 span 图标、
-     * 第 3 个是文本块）；结构变了就整行不动——绝不抛错影响侧栏。
-     * 幂等：官方重渲染把图标换回来时会再换一次，所以每次都验一遍。
-     */
-    function decorateWorkspaceRow(row) {
-      if (row == null) return
-      try {
-        var parts = row.children
-        if (parts == null || parts.length < 3) return
-        var folder = parts[0]
-        var text = parts[2]
-        if (folder == null || text == null || typeof folder.querySelector !== 'function') return
-        if (folder.querySelector('.dsh-gov-avatar') == null) {
-          var avatar = pixelAvatarElement('gov', row.getAttribute('data-row-key') || '')
-          avatar.setAttribute('class', 'dsh-gov-avatar')
-          var icon = folder.querySelector('svg')
-          if (icon != null) folder.replaceChild(avatar, icon)
-          else folder.appendChild(avatar)
-        }
-        var title = text.firstElementChild != null ? text.firstElementChild : text
-        if (typeof title.querySelector === 'function' && title.querySelector('.dsh-gov-crown') == null) {
-          var crown = document.createElement('span')
-          crown.setAttribute('class', 'dsh-gov-crown')
-          crown.textContent = CROWN
-          title.appendChild(crown)
-        }
-        row.setAttribute(ROW_ATTR, 'true')
-      } catch (error) {
-        console.debug('[governor-mode] workspace row decorate failed:', error)
-      }
-    }
-
-    /** 子树里的全部工作区行逐个装饰（querySelectorAll 缺席时静默）。 */
-    function decorateWorkspaceRows(root) {
-      if (root == null || typeof root.querySelectorAll !== 'function') return
-      var rows = []
-      try { rows = root.querySelectorAll(ROW_SELECTOR) } catch (error) { return }
-      for (var i = 0; i < rows.length; i += 1) decorateWorkspaceRow(rows[i])
-    }
-
-    /**
-     * 侧栏 DOM 看护（MutationObserver）：
-     *  - 悬停提示「新建会话」文案改写（sidebar 命名空间被官方占用，只能改文案；
-     *    aria-label 保持原样——拦截器靠它定位按钮）；
-     *  - 工作区行换头像挂徽记：官方每次重渲染行内图标都可能把我们的替换冲掉，
-     *    所以变更落在行内时就把那一行再装饰一遍。
+     * 侧栏 DOM 看护（MutationObserver）：只改「新建会话」悬停文案（叶子节点
+     * textContent 替换，React 安全）。工作区行装饰已改走纯 CSS（STYLESHEET
+     * 的 data-URI 规则）——绝不再增删替换 React 管理的节点。
      */
     function watchSidebar() {
       if (typeof MutationObserver !== 'function' || document.body == null) return function () {}
       relabelNewSession(document.body)
-      decorateWorkspaceRows(document.body)
       var observer = new MutationObserver(function (records) {
         for (var i = 0; i < records.length; i += 1) {
-          var record = records[i]
-          var target = record.target
-          var row = null
-          try {
-            row = target != null && target.nodeType === 1 && typeof target.closest === 'function'
-              ? target.closest(ROW_SELECTOR) : null
-          } catch (error) { row = null }
-          if (row != null) decorateWorkspaceRow(row)
-          var added = record.addedNodes
+          var added = records[i].addedNodes
           for (var j = 0; j < added.length; j += 1) {
             var node = added[j]
             if (node == null || node.nodeType !== 1) continue
             if (node.textContent != null && node.textContent.indexOf('新建会话') !== -1) relabelNewSession(node)
-            decorateWorkspaceRows(node)
           }
         }
       })
@@ -2053,12 +1995,12 @@ window.__ModuleLoader__.load({
     // Cordis 客户端强制依赖，声明即激活失败；一律防御式访问，缺席时静默降级。
     exports.inject = ['slots']
     exports.__internals = {
-      state, latest, rowsOf, layoutOf, stateOf, fusedState, titleOf, hashId, pixelGrid, pixelAvatar, pixelAvatarElement,
+      state, latest, rowsOf, layoutOf, stateOf, fusedState, titleOf, hashId, pixelGrid, pixelAvatar, pixelAvatarDataUri, GOV_ROW_AVATAR,
       PIXEL_PALETTE, PIXEL_GOVERNOR, PIXEL_WORKERS, measureWires, STYLESHEET, shouldPass, pollDelayMs, targetsOf, branchForSession,
       previewUrlOf, diffNewWorkspaces, ensureGovernor, sendPrompt, deliver,
       currentStrategy, PASS_SELECTOR, MAX_SUB, NEW_SESSION_SELECTOR, ROW_SELECTOR, CROWN,
       TABS_SERVICE, TAB_ID, TAB_KIND, TAB_SLOT, TAB_TITLE_SLOT, TAB_LABEL,
-      isNewSessionControl, decorateWorkspaceRow, decorateWorkspaceRows,
+      isNewSessionControl, relabelNewSession,
       openGovernorTab, setWorkspace, workspaceById,
       govBinds, teamCache, loadBind, spawnWorker,
       GovernorTabBody, GovernorTabTitle, GovernorWatch,
