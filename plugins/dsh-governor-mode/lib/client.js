@@ -1,18 +1,20 @@
 /**
- * dsh-governor-mode —— 浏览器半（v2 总督面板）。
+ * dsh-governor-mode —— 浏览器半（v3 总督面板，建立在官方 Agent Teams 上）。
  *
  * 总督模式是默认且唯一的工作模式，做四件事，全部走官方插槽与语义令牌：
  *  1. 侧栏工作区行（捕获阶段）：行内文件夹图标换成总督像素头像、名称尾部挂总督徽记，
- *     点击行 = 总督入口：有绑定开总督会话；老工作区（无绑定有会话）新建总督会话并
- *     接管已有会话当手下（>8 停旧，POST /takeover）；零会话懒建。右侧栏开「总督」标签页；
+ *     点击行 = 总督入口：有映射开总督会话；老工作区（有会话、无映射）不建总督，
+ *     开该工作区最近一个会话、面板显示未启用空态；零会话（新建工作区）懒建总督。
+ *     右侧栏开「总督」标签页；
  *  2. 面板是官方右侧栏的一个**标签页**（与浏览器 / 文档 / 编辑器并列，顶部标签切换）：
  *     走官方两阶段公开通路——`sidebarRightTabs` 服务注册标签类型（kind 'governor'），
  *     body / title 分别注册进 keyed 槽 `sidebar.right.pane.tab(.title)`（key = 类型 id），
  *     与官方 guide 标签同一条路；开标签用公开面 `sidebarRight.openTab('governor')`；
  *     `shell.overlay` 只挂一个渲染 null 的看护组件（工作区现场缓存 + 新工作区建总督）；
- *  3. 四区内容同一套：roster（总督 + ≤8 手下 + 状态灯 + 直角连线 + 分支标签）、
- *     选择题卡（autoAnswer 开关）、git 区（同步灯 + 指令按钮）、输入井（目标下拉）；
- *  4. 数据走宿主半 /api/governor/*（相对路径 fetch，同源），roster/questions 2s、
+ *  3. 四区内容同一套：roster（总督 + ≤8 队友——花名册读官方 Agent Teams 投影、
+ *     ＋号经官方 agentTeams 服务 spawn）、选择题卡（autoAnswer + reportMode 开关）、
+ *     git 区（同步灯 + 指令按钮）、输入井（目标下拉，派单走官方信箱）；
+ *  4. 数据走宿主半 /api/governor/*（相对路径 fetch，同源），roster/questions/team 2s、
  *     git-state 10s，页面不可见统一降到 15s，标签页不可见时只保留本地派生不拉网络；
  *     新建工作区 = 懒建总督 + 注入提示词。
  *
@@ -94,15 +96,14 @@ window.__ModuleLoader__.load({
     /** startSession 在途的工作区（防重复建会话）。 */
     var creating = new Set()
     /**
-     * 总督绑定缓存：workspaceId → { governor, workers }。唯一真源在宿主
-     * ~/.dsh/governor-binds.json（GET /bind 读、POST /bind 写）；老工作区
-     * 没有绑定，点一级栏行触发接管（pendingTakeover）后才写入。
+     * 总督映射缓存：workspaceId → { governor }。唯一真源在宿主
+     * ~/.dsh/governor-binds.json（GET /bind 读、POST /bind 写），只回答
+     * 「这个工作区的总督是哪个会话」；手下（队友）关系在官方 Agent Teams
+     * 花名册里（GET /team 读投影），本插件不再自造。老工作区没有映射＝不启用。
      */
     var govBinds = {}
-    /** 接管在途登记：workspaceId → { prev: 点行时的旧会话 id 快照, title }。 */
-    var pendingTakeover = new Map()
-    /** takeover POST 在途的工作区（防重复提交）。 */
-    var takeoverInflight = new Set()
+    /** 官方团队花名册缓存：workspaceId → { members, tasks }（GET /team 轮询写入，面板与测试的预置点）。 */
+    var teamCache = {}
 
     function emit() {
       listeners.forEach(function (fn) {
@@ -169,10 +170,10 @@ window.__ModuleLoader__.load({
 
     /**
      * 一级栏工作区行点击（总督入口）：
-     *  - 有绑定 → 直接打开总督会话；
-     *  - 无绑定但有会话（老工作区，没有总督概念）→ 新建一个总督会话并接管
-     *    已有会话当手下（startTakeover，看护轮询里 diff 出新会话后 POST /takeover）；
-     *  - 零会话 → 懒建总督（原通路）。
+     *  - 有映射 → 直接打开总督会话；
+     *  - 无映射但有会话（老工作区，总督模式启用前建的）→ 不建总督，
+     *    打开该工作区最近一个会话，面板显示未启用空态；
+     *  - 零会话（新建工作区）→ 懒建总督（官方 Agent Teams 的 Team Lead）。
      * 随后在官方右侧栏打开「总督」标签页。
      */
     function setWorkspace(workspaceId) {
@@ -186,13 +187,12 @@ window.__ModuleLoader__.load({
       }
       var ids = latest.wsSessions[workspaceId]
       if (Array.isArray(ids) && ids.length > 0) {
-        var snapshot = ids.slice()
         loadBind(workspaceId).then(function (bind) {
           if (bind != null && bind.governor != null) {
             openSession(bind.governor)
             return
           }
-          startTakeover(workspaceId, snapshot)
+          openSession(ids[ids.length - 1])
         })
         return
       }
@@ -200,31 +200,12 @@ window.__ModuleLoader__.load({
       if (target != null) lazyCreate(target)
     }
 
-    /**
-     * 老工作区接管第一步：记下点行时的旧会话快照，走官方 startSession 新建
-     * 总督会话。新会话 id 由 ensureGovernor 的差集看护拿到后 POST /takeover。
-     */
-    function startTakeover(workspaceId, prevIds) {
-      if (pendingTakeover.has(workspaceId) === true || takeoverInflight.has(workspaceId) === true) return
-      var ui = serviceOf(currentCtx, 'uiWorkspace')
-      if (ui == null || typeof ui.startSession !== 'function') return
-      var target = workspaceById(latest.wsList, workspaceId)
-      try { ui.startSession(workspaceId) } catch (error) {
-        console.debug('[governor-mode] takeover startSession failed:', error)
-        return
-      }
-      pendingTakeover.set(workspaceId, { prev: prevIds, title: target != null && target.title ? target.title : workspaceId })
-    }
-
-    /** 读宿主绑定：命中写进 govBinds 缓存并触发重渲染。 */
+    /** 读宿主映射：命中写进 govBinds 缓存并触发重渲染。 */
     function loadBind(workspaceId) {
       return apiGet('/bind?workspace=' + encodeURIComponent(workspaceId)).then(function (body) {
         if (body != null && body.ok === true && body.bind != null && typeof body.bind === 'object'
           && typeof body.bind.governor === 'string' && body.bind.governor !== '') {
-          govBinds[workspaceId] = {
-            governor: body.bind.governor,
-            workers: Array.isArray(body.bind.workers) ? body.bind.workers : [],
-          }
+          govBinds[workspaceId] = { governor: body.bind.governor }
           emit()
           return govBinds[workspaceId]
         }
@@ -914,14 +895,29 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** 新建手下子会话：总督栏右侧加号是唯一入口。 */
-    function addWorkerSession(workspaceId) {
+    /**
+     * 新建队友：总督栏右侧加号是唯一入口，经宿主 /spawn 走官方
+     * agentTeams.spawnTeammate（上限 8 由官方校验）。总督 agent 不在场时
+     * 先把它打开，下一轮再点。
+     */
+    function spawnWorker(workspaceId, governorId, existingCount) {
       if (typeof workspaceId !== 'string' || workspaceId === '') return
-      var ui = serviceOf(currentCtx, 'uiWorkspace')
-      if (ui == null || typeof ui.startSession !== 'function') return
-      try { ui.startSession(workspaceId) } catch (error) {
-        console.debug('[governor-mode] startSession failed:', error)
-      }
+      if (typeof governorId !== 'string' || governorId === '') return
+      if (existingCount >= MAX_SUB) return
+      var target = workspaceById(latest.wsList, workspaceId)
+      var name = 'worker-' + (existingCount + 1)
+      apiPost('/spawn', {
+        lead: governorId,
+        workspace: workspaceId,
+        title: target != null && target.title ? target.title : workspaceId,
+        name: name,
+        description: '手下 ' + (existingCount + 1),
+        prompt: '待命：等待总督派发任务。',
+      }).then(function (body) {
+        if (body != null && body.ok === true) return
+        console.debug('[governor-mode] spawn teammate failed:', body != null ? body.error : 'no response')
+        openSession(governorId)
+      })
     }
 
     function postBootstrap(sessionId, workspaceId, title, sessions) {
@@ -935,54 +931,20 @@ window.__ModuleLoader__.load({
       }).catch(function () { return false })
     }
 
-    /** 本插件懒建的工作区会话就位后注入总督提示词（失败回滚，下轮重试）；绑定即刻写缓存并持久化。 */
+    /** 本插件懒建的工作区会话就位后注入总督提示词（失败回滚，下轮重试）；映射即刻写缓存并持久化。 */
     function bootstrapWorkspace(ws) {
       var wid = ws.workspaceId
       var ids = Array.isArray(ws.sessionIds) ? ws.sessionIds : []
       bootstrapped.add(wid)
       creating.delete(wid)
       var governor = ids[0]
-      var workers = ids.slice(1, 1 + MAX_SUB)
-      govBinds[wid] = { governor: governor, workers: workers }
-      postBootstrap(governor, wid, ws.title || wid, workers).then(function (ok) {
+      govBinds[wid] = { governor: governor }
+      postBootstrap(governor, wid, ws.title || wid, []).then(function (ok) {
         if (ok !== true) {
           bootstrapped.delete(wid)
           return
         }
-        apiPost('/bind', { workspace: wid, governor: governor, workers: workers })
-      })
-    }
-
-    /**
-     * 老工作区接管第二步（看护轮询里跑）：点行后官方 startSession 建出的新会话
-     * 即总督——与点行时的旧会话快照 diff 拿到它的 id，POST /takeover 原子完成
-     * 收编手下（>8 停旧）、写绑定、注入总督提示词与手下简报纪律。
-     */
-    function runTakeovers(list) {
-      if (Array.isArray(list) !== true) return
-      pendingTakeover.forEach(function (entry, wid) {
-        if (takeoverInflight.has(wid) === true) return
-        var ws = workspaceById(list, wid)
-        if (ws == null) return
-        var ids = Array.isArray(ws.sessionIds) ? ws.sessionIds : []
-        var fresh = ids.filter(function (id) { return entry.prev.indexOf(id) === -1 })
-        if (fresh.length === 0) return
-        var governor = fresh[0]
-        takeoverInflight.add(wid)
-        apiPost('/takeover', {
-          workspace: wid,
-          title: entry.title,
-          governor: governor,
-          sessions: entry.prev,
-        }).then(function (body) {
-          takeoverInflight.delete(wid)
-          if (body == null || body.ok !== true) return
-          govBinds[wid] = { governor: governor, workers: Array.isArray(body.workers) ? body.workers : [] }
-          pendingTakeover.delete(wid)
-          openSession(governor)
-          emit()
-          if (body.delivered !== true) postBootstrap(governor, wid, entry.title, govBinds[wid].workers)
-        }).catch(function () { takeoverInflight.delete(wid) })
+        apiPost('/bind', { workspace: wid, governor: governor })
       })
     }
 
@@ -991,7 +953,6 @@ window.__ModuleLoader__.load({
      * 本插件懒建的工作区会话就位后注入总督提示词（用户既有会话不打扰）。
      */
     function ensureGovernor(list, autostart) {
-      runTakeovers(list)
       var fresh = diffNewWorkspaces(knownWorkspaces, list)
       for (var i = 0; i < fresh.length; i += 1) {
         var ws = fresh[i]
@@ -1092,15 +1053,22 @@ window.__ModuleLoader__.load({
     /* 发送通路：POST /prompt 优先，失败降级草稿搬运桥                              */
     /* ====================================================================== */
 
-    function sendPrompt(sessionId, text) {
-      return apiPost('/prompt', { session: sessionId, text: text })
-        .then(function (body) { return body != null && body.ok === true })
+    /**
+     * 发提示词：team = {lead, target} 时宿主优先走官方 agentTeams 信箱
+     * （在跑的队友排队送达、不打断），缺席自动退回 subagents.prompt 老路。
+     */
+    function sendPrompt(sessionId, text, team) {
+      var body = team != null && typeof team.target === 'string' && team.target !== ''
+        ? { lead: team.lead, target: team.target, session: sessionId, text: text }
+        : { session: sessionId, text: text }
+      return apiPost('/prompt', body)
+        .then(function (r) { return r != null && r.ok === true })
         .catch(function () { return false })
     }
 
     /** 给会话发提示词；控制平面不通时降级为「打开会话 + 草稿搬运」。 */
-    function deliver(sessionId, text) {
-      sendPrompt(sessionId, text).then(function (ok) {
+    function deliver(sessionId, text, team) {
+      sendPrompt(sessionId, text, team).then(function (ok) {
         if (ok === true) return
         state.draft = { sessionId: sessionId, text: text }
         openSession(sessionId)
@@ -1149,18 +1117,11 @@ window.__ModuleLoader__.load({
 
       var wsId = workspace != null ? workspace.workspaceId : ''
       var sessionIds = workspace != null && Array.isArray(workspace.sessionIds) ? workspace.sessionIds : []
-      /* 总督只认绑定，不认「第一个会话」：老工作区未接管时 governorId=null，
-         点一级栏行触发接管，期间面板显示空态。 */
+      /* 总督只认映射，不认「第一个会话」：老工作区无映射时 governorId=null，
+         面板显示未启用空态；手下（队友）一律读官方 Agent Teams 花名册。 */
       var bind = wsId !== '' ? govBinds[wsId] : null
       var governorId = bind != null && bind.governor != null && sessionIds.indexOf(bind.governor) !== -1
         ? bind.governor : null
-      var subIds = []
-      if (bind != null && Array.isArray(bind.workers)) {
-        for (var bi = 0; bi < bind.workers.length && subIds.length < MAX_SUB; bi += 1) {
-          var workerId = bind.workers[bi]
-          if (sessionIds.indexOf(workerId) !== -1) subIds.push(workerId)
-        }
-      }
 
       latest.workspaceId = wsId || null
       latest.governorId = governorId
@@ -1184,7 +1145,7 @@ window.__ModuleLoader__.load({
       var questionsPair = react.useState([])
       var questions = questionsPair[0]
       var setQuestions = questionsPair[1]
-      var settingsPair = react.useState({ autoAnswer: false, autostart: true })
+      var settingsPair = react.useState({ autoAnswer: false, autostart: true, reportMode: 'wake' })
       var settings = settingsPair[0]
       var setSettings = settingsPair[1]
       var gitPair = react.useState(null)
@@ -1216,8 +1177,33 @@ window.__ModuleLoader__.load({
       }
 
       function statusOf(id) {
+        if (phaseOf(id) === 'failed') return 'warning'
         var local = statusMap != null && typeof statusMap.get === 'function' ? statusMap.get(id) : null
         return fusedState(summaries[id], entryOf(id), local)
+      }
+
+      /* 手下（队友）列表 = 官方 Agent Teams 花名册 ∩ 本工作区会话（封顶 8）。 */
+      var team = teamCache[wsId] != null ? teamCache[wsId] : { members: [], tasks: [] }
+      var teamMembers = Array.isArray(team.members) ? team.members : []
+      var subIds = []
+      for (var bi = 0; bi < teamMembers.length && subIds.length < MAX_SUB; bi += 1) {
+        var member = teamMembers[bi]
+        if (member != null && typeof member.id === 'string' && member.id !== governorId
+          && sessionIds.indexOf(member.id) !== -1) subIds.push(member.id)
+      }
+      function nameOf(id) {
+        for (var ni = 0; ni < teamMembers.length; ni += 1) {
+          if (teamMembers[ni] != null && teamMembers[ni].id === id) {
+            return typeof teamMembers[ni].name === 'string' ? teamMembers[ni].name : ''
+          }
+        }
+        return ''
+      }
+      function phaseOf(id) {
+        for (var pi = 0; pi < teamMembers.length; pi += 1) {
+          if (teamMembers[pi] != null && teamMembers[pi].id === id) return teamMembers[pi].phase
+        }
+        return null
       }
 
       function refreshCore() {
@@ -1228,6 +1214,7 @@ window.__ModuleLoader__.load({
           apiGet('/roster?sessions=' + encodeURIComponent(sessions) + '&workspace=' + encodeURIComponent(wsId)),
           apiGet('/questions?sessions=' + encodeURIComponent(sessions)),
           apiGet('/settings?workspace=' + encodeURIComponent(wsId)),
+          governorId != null ? apiGet('/team?session=' + encodeURIComponent(governorId)) : Promise.resolve(null),
         ]).then(function (answers) {
           var rosterBody = answers[0]
           var questionsBody = answers[1]
@@ -1248,9 +1235,24 @@ window.__ModuleLoader__.load({
             var nextSettings = {
               autoAnswer: settingsBody.settings.autoAnswer === true,
               autostart: settingsBody.settings.autostart !== false,
+              reportMode: settingsBody.settings.reportMode === 'quiet' ? 'quiet' : 'wake',
             }
             autostartCache = nextSettings.autostart
             if (JSON.stringify(nextSettings) !== JSON.stringify(settings)) setSettings(nextSettings)
+          }
+          var teamBody = answers[3]
+          if (teamBody != null && teamBody.ok === true) {
+            var nextTeam = {
+              members: Array.isArray(teamBody.members) ? teamBody.members : [],
+              tasks: Array.isArray(teamBody.tasks) ? teamBody.tasks : [],
+            }
+            if (JSON.stringify(nextTeam) !== JSON.stringify(teamCache[wsId] ?? { members: [], tasks: [] })) {
+              teamCache[wsId] = nextTeam
+              emit()
+            }
+          } else if (governorId == null && teamCache[wsId] != null) {
+            delete teamCache[wsId]
+            emit()
           }
         }).catch(function () { void 0 })
       }
@@ -1332,7 +1334,16 @@ window.__ModuleLoader__.load({
           autostart: settings.autostart !== false,
         }
         apiPut('/settings', { workspace: wsId, settings: next }).then(function (body) {
-          if (body != null && body.ok === true) setSettings(next)
+          if (body != null && body.ok === true) setSettings({ autoAnswer: next.autoAnswer, autostart: next.autostart, reportMode: settings.reportMode })
+        }).catch(function () { void 0 })
+      }
+
+      function toggleReportMode() {
+        var next = {
+          reportMode: settings.reportMode === 'quiet' ? 'wake' : 'quiet',
+        }
+        apiPut('/settings', { workspace: wsId, settings: next }).then(function (body) {
+          if (body != null && body.ok === true) setSettings({ autoAnswer: settings.autoAnswer, autostart: settings.autostart, reportMode: next.reportMode })
         }).catch(function () { void 0 })
       }
 
@@ -1355,6 +1366,13 @@ window.__ModuleLoader__.load({
           title: '自动作答：开 = 总督按推理选最佳并说明理由，主观题仍问用户；关 = 全部汇报用户',
           onClick: toggleAutoAnswer,
         }, react.createElement('span', { className: 'dsh-gov-dot2' }), '自动作答'),
+        react.createElement('button', {
+          type: 'button',
+          className: 'dsh-gov-toggle',
+          'aria-pressed': settings.reportMode === 'wake',
+          title: '汇报模式：即时汇报 = 手下完工给总督发消息（官方纪律，会唤醒总督）；静默简报 = 只记任务板，用户问起总督才读',
+          onClick: toggleReportMode,
+        }, react.createElement('span', { className: 'dsh-gov-dot2' }), settings.reportMode === 'quiet' ? '静默简报' : '即时汇报'),
         react.createElement('span', { className: 'dsh-gov-sp' }),
         react.createElement(
           'span',
@@ -1462,8 +1480,8 @@ window.__ModuleLoader__.load({
           'div',
           { className: 'dsh-gov-row', key: 'row-' + rowIndex },
           slice.map(function (id) {
-            var label = titleOfId(id)
-            var branch = branchForSession(titleOfId(id), workers)
+            var label = nameOf(id) || titleOfId(id)
+            var branch = branchForSession(nameOf(id) || titleOfId(id), workers)
             return react.createElement(
               'button',
               {
@@ -1502,9 +1520,9 @@ window.__ModuleLoader__.load({
         react.createElement('button', {
           type: 'button',
           className: 'dsh-gov-action dsh-gov-add',
-          disabled: workspace == null || subIds.length >= MAX_SUB,
-          title: '新建手下子会话',
-          onClick: function () { if (workspace != null) addWorkerSession(workspace.workspaceId) },
+          disabled: governorId == null || subIds.length >= MAX_SUB,
+          title: '新建队友（官方 Agent Teams，上限 8）',
+          onClick: function () { spawnWorker(wsId, governorId, subIds.length) },
         }, '+'),
       )
 
@@ -1569,7 +1587,7 @@ window.__ModuleLoader__.load({
           { className: 'dsh-gov-top' },
           governorId == null
             ? react.createElement('span', { className: 'dsh-gov-empty' },
-              sessionIds.length > 0 ? '正在接管工作区…' : '这个工作区还没有会话')
+              sessionIds.length > 0 ? '老工作区未启用总督' : '这个工作区还没有会话')
             : react.createElement(
               'button',
               {
@@ -1620,7 +1638,7 @@ window.__ModuleLoader__.load({
 
       /* ---- 输入井 ---- */
 
-      var targets = targetsOf(governorId, subIds, titleOfId)
+      var targets = targetsOf(governorId, subIds, function (id) { return nameOf(id) || titleOfId(id) })
       var activeTarget = target
       if (activeTarget === '' || targets.every(function (t) { return t.id !== activeTarget })) {
         activeTarget = targets.length > 0 ? targets[0].id : ''
@@ -1640,7 +1658,10 @@ window.__ModuleLoader__.load({
           if (governorId != null) ids.push(governorId)
           ids = ids.concat(subIds)
           if (ids.length === 0) return
-          Promise.all(ids.map(function (sid) { return sendPrompt(sid, text) })).then(function (results) {
+          Promise.all(ids.map(function (sid) {
+            var nm = nameOf(sid)
+            return sendPrompt(sid, text, nm !== '' ? { lead: governorId, target: nm } : null)
+          })).then(function (results) {
             var anyOk = results.some(function (r) { return r === true })
             if (anyOk === true || governorId == null) return
             state.draft = { sessionId: governorId, text: text }
@@ -1648,7 +1669,8 @@ window.__ModuleLoader__.load({
           })
           return
         }
-        deliver(id, text)
+        var nm2 = nameOf(id)
+        deliver(id, text, nm2 !== '' ? { lead: governorId, target: nm2 } : null)
       }
 
       var input = react.createElement(
@@ -1669,7 +1691,7 @@ window.__ModuleLoader__.load({
             rows: 1,
             value: draft,
             placeholder: governorId == null
-              ? (sessionIds.length > 0 ? '点左侧工作区行建立总督' : '先在这个工作区新建会话')
+              ? (sessionIds.length > 0 ? '老工作区未启用总督' : '先在这个工作区新建会话')
               : '发给…',
             disabled: governorId == null,
             onChange: function (event) { setDraft(event.target.value) },
@@ -2038,9 +2060,9 @@ window.__ModuleLoader__.load({
       TABS_SERVICE, TAB_ID, TAB_KIND, TAB_SLOT, TAB_TITLE_SLOT, TAB_LABEL,
       isNewSessionControl, decorateWorkspaceRow, decorateWorkspaceRows,
       openGovernorTab, setWorkspace, workspaceById,
-      govBinds, pendingTakeover, takeoverInflight, loadBind, startTakeover, runTakeovers,
+      govBinds, teamCache, loadBind, spawnWorker,
       GovernorTabBody, GovernorTabTitle, GovernorWatch,
-      addWorkerSession, createWorkspacePanel,
+      createWorkspacePanel,
     }
     return module.exports
   },

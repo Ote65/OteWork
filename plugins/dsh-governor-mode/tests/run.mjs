@@ -3,7 +3,7 @@
  *
  *   node tests/run.mjs
  *
- * 三个套件：host（宿主半十三条路由）、client（浏览器半总督面板）、prompt（总督提示词）。
+ * 三个套件：host（宿主半十二条路由）、client（浏览器半总督面板）、prompt（总督提示词）。
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
@@ -73,7 +73,7 @@ function report(suite) {
 }
 
 /* ---------------------------------------------------------------------- */
-/* host 套件：宿主半十三条路由                                                 */
+/* host 套件：宿主半十二条路由                                                 */
 /* ---------------------------------------------------------------------- */
 
 /** 会话替身：宿主半读到的面（snapshotEvents(from) 半开区间，seq 是下一偏移）。 */
@@ -116,6 +116,7 @@ function makeCtx(options = {}) {
       if (name === 'userQuestions') return options.userQuestions
       if (name === 'commands') return options.commands
       if (name === 'subagents') return options.subagents
+      if (name === 'agentTeams') return options.agentTeams
       return undefined
     },
   }
@@ -187,16 +188,16 @@ function askEvents(callId = 'c1') {
 async function runHost(reportFn) {
   const suite = createSuite('host')
 
-  suite.check('registers all thirteen routes under /api/governor', () => {
+  suite.check('registers all twelve routes under /api/governor', () => {
     const made = boot()
-    equal(routes.length, 13, 'route count')
+    equal(routes.length, 12, 'route count')
     const paths = routes.map((route) => route.path).join(' ')
-    for (const name of ['/roster', '/transcript', '/questions', '/prompt', '/answer', '/command', '/settings', '/git-state', '/bootstrap', '/bind', '/takeover', '/report', '/reports']) {
+    for (const name of ['/roster', '/transcript', '/questions', '/prompt', '/answer', '/command', '/settings', '/git-state', '/bootstrap', '/bind', '/team', '/spawn']) {
       includes(paths, name, 'route present')
       includes(paths, ROUTE_PREFIX, 'under the governor prefix')
     }
-    // 挂载：十三条全部注册到 webServer（plus-menu 同款通路），首选 kind:'exact' 形状。
-    equal(made.ctx.registered.length, 13, 'all routes mounted on the web server')
+    // 挂载：十二条全部注册到 webServer（plus-menu 同款通路），首选 kind:'exact' 形状。
+    equal(made.ctx.registered.length, 12, 'all routes mounted on the web server')
     equal(made.ctx.registered[0].kind, 'exact', 'exact-kind registration shape')
     includes(made.ctx.registered[0].path, '/api/governor/roster', 'mounted path')
   })
@@ -311,6 +312,33 @@ async function runHost(reportFn) {
     equal(prompted[0].text, '干活', 'text delivered')
   })
 
+  await suite.checkAsync('prompt prefers the native agentTeams mailbox when the lead is live', async () => {
+    const sent = []
+    boot({
+      agents: { get: (id) => (id === 's-gov' ? { id } : undefined) },
+      agentTeams: { sendMessage: async (caller, request) => { sent.push({ caller, request }); return { messageId: 'm1', status: 'queued' } } },
+    })
+    const { status, body } = await call('/prompt', { method: 'POST', body: { lead: 's-gov', target: 'worker-1', text: '干活' } })
+    equal(status, 200, 'status')
+    equal(body.via, 'agentTeams.sendMessage', 'native mailbox used')
+    equal(body.status, 'queued', 'queued is reported (busy worker keeps its task)')
+    equal(sent.length, 1, 'sent once')
+    equal(sent[0].request.target, 'worker-1', 'target name travels')
+    // 队友名不认识：官方抛错如实回 409，不悄悄退回老路
+    boot({
+      agents: { get: () => ({ id: 'x' }) },
+      agentTeams: { sendMessage: async () => { throw new Error('active teammate "ghost" not found') } },
+    })
+    const bad = await call('/prompt', { method: 'POST', body: { lead: 's-gov', target: 'ghost', text: '干活' } })
+    equal(bad.status, 409, 'team error surfaces')
+    includes(bad.body.error, 'not found', 'reason travels')
+    // 官方通路缺席（服务不在）：退回 session 老路
+    boot({ subagents: { prompt: async () => {} } })
+    const legacy = await call('/prompt', { method: 'POST', body: { lead: 's-gov', target: 'worker-1', session: 's-a', text: '干活' } })
+    equal(legacy.status, 200, 'legacy fallback works')
+    includes(legacy.body.via, 'prompt', 'went through subagents')
+  })
+
   await suite.checkAsync('answer replays the choice through userQuestions', async () => {
     const answered = []
     boot({
@@ -369,6 +397,14 @@ async function runHost(reportFn) {
     const readBack = await call('/settings', { query: '?workspace=w-set' })
     equal(readBack.body.settings.autoAnswer, true, 'autoAnswer persisted')
     equal(readBack.body.settings.autostart, true, 'untouched key keeps its value')
+    equal(readBack.body.settings.reportMode, 'wake', 'reportMode defaults to wake')
+    const badMode = await call('/settings', { method: 'PUT', body: { workspace: 'w-set', settings: { reportMode: 'loud' } } })
+    equal(badMode.status, 400, 'unknown reportMode is rejected')
+    const quiet = await call('/settings', { method: 'PUT', body: { workspace: 'w-set', settings: { reportMode: 'quiet' } } })
+    equal(quiet.status, 200, 'quiet accepted')
+    const readQuiet = await call('/settings', { query: '?workspace=w-set' })
+    equal(readQuiet.body.settings.reportMode, 'quiet', 'reportMode round-trips')
+    equal(readQuiet.body.settings.autoAnswer, true, 'other keys survive')
   })
 
   await suite.checkAsync('git-state is a pure file read, never a git run', async () => {
@@ -419,7 +455,7 @@ async function runHost(reportFn) {
     includes(prompted[0].text, 'session-a', 'prompt lists the workers')
   })
 
-  await suite.checkAsync('bind round-trips through the file and the overlay', async () => {
+  await suite.checkAsync('bind round-trips the governor mapping through the file', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'governor-binds-'))
     const file = join(dir, 'binds.json')
     try {
@@ -430,11 +466,10 @@ async function runHost(reportFn) {
       equal(empty.body.bind, null, 'unknown workspace has no bind')
       const post = await call('/bind', {
         method: 'POST',
-        body: { workspace: 'w-bind-1', governor: 's-gov', workers: ['s-a', 's-gov', 's-b'] },
+        body: { workspace: 'w-bind-1', governor: 's-gov' },
       })
       equal(post.status, 200, 'post status')
       equal(post.body.bind.governor, 's-gov', 'governor stored')
-      equal(post.body.bind.workers.join(','), 's-a,s-b', 'governor filtered out of workers')
       const read = await call('/bind', { query: '?workspace=w-bind-1' })
       equal(read.body.bind.governor, 's-gov', 'read back')
       const onDisk = JSON.parse(readFileSync(file, 'utf8'))
@@ -444,59 +479,69 @@ async function runHost(reportFn) {
     }
   })
 
-  await suite.checkAsync('takeover caps workers at 8, stops the stale ones, binds and injects', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'governor-takeover-'))
-    const file = join(dir, 'binds.json')
-    try {
-      const stopped = []
-      const prompted = []
-      const sessions = []
-      for (let i = 0; i < 10; i += 1) sessions.push('s-old-' + i)
-      boot({
-        agents: { get: (id) => ({ stop: () => { stopped.push(id) } }) },
-        subagents: { prompt: async (sessionId, text) => { prompted.push({ sessionId, text }) } },
-      }, { bindsPath: file })
-      const missing = await call('/takeover', { method: 'POST', body: { workspace: 'w-t1' } })
-      equal(missing.status, 400, 'workspace and governor are required')
-      const { status, body } = await call('/takeover', {
-        method: 'POST',
-        body: { workspace: 'w-t1', title: '老阿尔法', governor: 's-gov-new', sessions },
-      })
-      equal(status, 200, 'status')
-      equal(body.ok, true, 'ok')
-      equal(body.workers.join(','), 's-old-2,s-old-3,s-old-4,s-old-5,s-old-6,s-old-7,s-old-8,s-old-9', 'keeps the newest 8')
-      equal(stopped.join(','), 's-old-0,s-old-1', 'stops the stale head of the list')
-      equal(body.delivered, true, 'the governor prompt was delivered')
-      const gov = prompted.find((entry) => entry.sessionId === 's-gov-new')
-      assert(gov !== undefined, 'governor got a prompt')
-      includes(gov.text, '老阿尔法', 'governor prompt names the workspace')
-      includes(gov.text, 's-old-9', 'governor prompt lists the workers')
-      equal(prompted.filter((entry) => entry.sessionId !== 's-gov-new').length, 8, 'every worker got the briefing')
-      const brief = prompted.find((entry) => entry.sessionId === 's-old-5')
-      includes(brief.text, '/api/governor/report', 'briefing carries the report curl')
-      includes(brief.text, 's-old-5', 'briefing names its own session')
-      const read = await call('/bind', { query: '?workspace=w-t1' })
-      equal(read.body.bind.governor, 's-gov-new', 'bind written by the takeover')
-      equal(read.body.bind.workers.length, 8, 'workers bound')
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
+  await suite.checkAsync('team folds the official roster and task board from session events', async () => {
+    const events = [
+      { seq: 1, time: 1, type: 'team/member', data: { version: 2, teamId: 's-gov', member: { id: 's-a', name: 'worker-1', description: '手下 1', provider: 'spawn', context: 'fresh', phase: 'provisioning' } } },
+      { seq: 2, time: 2, type: 'team/member', data: { version: 2, teamId: 's-gov', member: { id: 's-a', name: 'worker-1', description: '手下 1', provider: 'spawn', context: 'fresh', phase: 'active' } } },
+      { seq: 3, time: 3, type: 'team/member', data: { version: 2, teamId: 's-gov', member: { id: 's-b', name: 'worker-2', description: '手下 2', provider: 'spawn', context: 'fresh', phase: 'failed', error: 'boom' } } },
+      { seq: 4, time: 4, type: 'team/task', data: { version: 2, teamId: 's-gov', task: { id: 'task-1', revision: 2, subject: '修 bug', description: 'd', status: 'in_progress', ownerId: 's-a', blockedBy: [], writeScopes: [] } } },
+      { seq: 5, time: 5, type: 'team/message/queued', data: { version: 2, teamId: 's-gov', message: { id: 'tm-1', senderId: 's-a', senderName: 'worker-1', targetId: 's-gov', content: [] } } },
+      { seq: 6, time: 6, type: 'team/message/delivered', data: { version: 2, teamId: 's-gov', messageId: 'tm-1', targetId: 's-gov' } },
+      { seq: 7, time: 7, type: 'user/message', data: {} },
+      { seq: 8, time: 8, type: 'team/member', data: { garbage: true } },
+    ]
+    boot({ sessions: [['s-gov', fakeSession(events)]] })
+    const missing = await call('/team', { query: '' })
+    equal(missing.status, 400, 'session is required')
+    const dead = await call('/team', { query: '?session=s-none' })
+    equal(dead.body.live, false, 'not live answers empty')
+    equal(dead.body.members.length, 0, 'empty members')
+    const { status, body } = await call('/team', { query: '?session=s-gov' })
+    equal(status, 200, 'status')
+    equal(body.members.length, 2, 'two members, garbage event skipped')
+    equal(body.members[0].id, 's-a', 'first member')
+    equal(body.members[0].phase, 'active', 'latest phase wins')
+    equal(body.members[1].phase, 'failed', 'failed phase kept')
+    equal(body.tasks.length, 1, 'one task')
+    equal(body.tasks[0].status, 'in_progress', 'task status')
+    equal(body.queued.length, 1, 'one queued message')
+    equal(body.delivered.join(','), 'tm-1', 'delivery recorded')
+    equal(body.maxMembers, 8, 'official cap reported')
   })
 
-  await suite.checkAsync('report inbox collects briefings and caps at 50', async () => {
-    boot()
-    const missing = await call('/report', { method: 'POST', body: { workspace: 'w-rep', session: 's-a' } })
-    equal(missing.status, 400, 'workspace, session and text are required')
-    for (let i = 0; i < 52; i += 1) {
-      await call('/report', { method: 'POST', body: { workspace: 'w-rep', session: 's-a', text: '简报' + i } })
-    }
-    const { body } = await call('/reports', { query: '?workspace=w-rep' })
+  await suite.checkAsync('spawn goes through the official agentTeams service with the briefing attached', async () => {
+    const spawned = []
+    boot({
+      agents: { get: (id) => (id === 's-gov' ? { id } : undefined) },
+      agentTeams: { spawnTeammate: async (caller, request) => { spawned.push({ caller, request }); return { member: { id: 's-new', name: request.name, role: 'teammate', status: 'inactive' } } } },
+    })
+    const missing = await call('/spawn', { method: 'POST', body: { lead: 's-gov' } })
+    equal(missing.status, 400, 'lead and name are required')
+    const { status, body } = await call('/spawn', {
+      method: 'POST',
+      body: { lead: 's-gov', workspace: 'w-sp', title: '阿尔法', name: 'worker-1', description: '手下 1' },
+    })
+    equal(status, 200, 'status')
     equal(body.ok, true, 'ok')
-    equal(body.reports.length, 50, 'capped at 50')
-    equal(body.reports[0].text, '简报2', 'oldest dropped')
-    equal(body.reports[49].text, '简报51', 'newest kept')
-    const empty = await call('/reports', { query: '?workspace=w-rep-none' })
-    equal(empty.body.reports.length, 0, 'unknown workspace reads empty')
+    equal(body.member.name, 'worker-1', 'member view returned')
+    equal(spawned.length, 1, 'spawned once')
+    const text = spawned[0].request.prompt.map((block) => block.text ?? '').join('')
+    includes(text, '待命', 'default standby prompt')
+    includes(text, '阿尔法', 'briefing names the workspace')
+    includes(text, 'send_message', 'wake mode briefing reports via the native mailbox')
+    // quiet 模式：简报改走任务板，不发 lead 消息
+    await call('/settings', { method: 'PUT', body: { workspace: 'w-sp-quiet', settings: { reportMode: 'quiet' } } })
+    await call('/spawn', { method: 'POST', body: { lead: 's-gov', workspace: 'w-sp-quiet', name: 'worker-9' } })
+    const quietText = spawned[1].request.prompt.map((block) => block.text ?? '').join('')
+    includes(quietText, '任务板', 'quiet briefing uses the task board')
+    assert(quietText.includes('send_message({ target: "lead" })') === false, 'quiet briefing does not message the lead')
+    // 服务缺席 / agent 不在场：如实报错
+    boot({})
+    const noService = await call('/spawn', { method: 'POST', body: { lead: 's-gov', name: 'worker-1' } })
+    equal(noService.status, 501, '501 without the official team layer')
+    boot({ agents: { get: () => undefined }, agentTeams: { spawnTeammate: async () => ({}) } })
+    const noAgent = await call('/spawn', { method: 'POST', body: { lead: 's-gov', name: 'worker-1' } })
+    equal(noAgent.status, 409, '409 when the governor agent is not live')
   })
 
   suite.check('pure helpers tolerate hostile shapes', () => {
@@ -874,7 +919,7 @@ async function runClient(reportFn) {
     // 工作区行拦截：打开该工作区的总督会话 + 右侧栏总督标签页（一级栏是总督入口）
     const row = { getAttribute: () => 'workspace:w9' }
     bundle.internals.latest.wsSessions = { w9: ['s-gov', 's-a'] }
-    bundle.internals.govBinds.w9 = { governor: 's-gov', workers: ['s-a'] }
+    bundle.internals.govBinds.w9 = { governor: 's-gov' }
     handler(makeEvent({ closest: (selector) => (selector.startsWith('[data-row-key') ? row : null) }))
     equal(prevented.value, true, 'workspace row is intercepted')
     equal(bundle.internals.state.workspaceId, 'w9', 'the workspace is selected')
@@ -1086,13 +1131,12 @@ async function runClient(reportFn) {
     const payload = JSON.parse(bootstrap.init.body)
     equal(payload.session, 's-gov', 'prompt goes to the first session')
     equal(payload.workspace, 'w-new', 'workspace id')
-    equal(payload.sessions.join(','), 's-a', 'workers listed')
-    // 注入成功后绑定持久化到宿主（下次进面板直接认这个总督）
+    equal(payload.sessions.length, 0, 'no workers yet at bootstrap')
+    // 注入成功后映射持久化到宿主（下次进面板直接认这个总督）
     const bindPost = calls.find((entry) => entry.url.includes('/api/governor/bind'))
     assert(bindPost !== undefined, 'bind was posted after bootstrap')
     const bindBody = JSON.parse(bindPost.init.body)
     equal(bindBody.governor, 's-gov', 'bind governor')
-    equal(bindBody.workers.join(','), 's-a', 'bind workers')
     equal(bundle.internals.govBinds['w-new'].governor, 's-gov', 'bind cached immediately')
   })
 
@@ -1137,11 +1181,24 @@ async function runClient(reportFn) {
   })
 
   suite.check('the panel renders all four sections', () => {
-    const bundle = loadBundle()
+    const calls = []
+    const bundle = loadBundle({
+      fetch: (url, init) => {
+        calls.push({ url, init })
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) })
+      },
+    })
     const registrations = bundle.registrations
     const panel = registrations.find((entry) => entry.registration.name === 'sidebar.right.pane.tab')
     assert(panel !== undefined, 'the panel component is registered as the tab body')
-    bundle.internals.govBinds.w1 = { governor: 's-gov', workers: ['s-a', 's-b'] }
+    bundle.internals.govBinds.w1 = { governor: 's-gov' }
+    bundle.internals.teamCache.w1 = {
+      members: [
+        { id: 's-a', name: 'worker-1', phase: 'active', description: '手下 1' },
+        { id: 's-b', name: 'worker-2', phase: 'failed', description: '手下 2' },
+      ],
+      tasks: [],
+    }
     const element = panel.Component({
       useTabInfo: () => ({ tab: { visible: true } }),
       useWorkspaces: (pick) => pick({ items: [{ workspaceId: 'w1', title: '阿尔法', sessionIds: ['s-gov', 's-a', 's-b'] }] }),
@@ -1150,18 +1207,23 @@ async function runClient(reportFn) {
     })
     const texts = textsOf(element).join(' | ')
     includes(texts, '阿尔法', 'workspace title')
-    includes(texts, '2 / 8', 'worker count')
+    includes(texts, '2 / 8', 'worker count from the official roster')
     includes(texts, '总督会话', 'governor button')
-    includes(texts, '甲', 'worker label')
-    // 加号在总督栏右侧，是新增手下子会话的唯一入口；网格里的加卡片已删
+    includes(texts, 'worker-1', 'teammate label comes from the official name')
+    // 加号在总督栏右侧，是新建队友的唯一入口（官方 spawn，上限 8）；网格里的加卡片已删
     equal(texts.includes('新建手下'), false, 'the grid add card is gone')
     const add = findByClass(element, 'dsh-gov-add')
     equal(add.length, 1, 'one head add button')
     equal(add[0].props.children, '+', 'plus glyph')
-    equal(add[0].props.disabled, false, 'enabled while there is room for another worker')
+    equal(add[0].props.disabled, false, 'enabled while there is room for another teammate')
     add[0].props.onClick()
-    equal(bundle.startCalls.join(','), 'w1', 'the plus starts a worker session in this workspace')
+    const spawnCall = calls.find((entry) => entry.url.includes('/api/governor/spawn'))
+    assert(spawnCall !== undefined, 'the plus posts to /spawn')
+    const spawnBody = JSON.parse(spawnCall.init.body)
+    equal(spawnBody.lead, 's-gov', 'spawn addressed through the governor')
+    equal(spawnBody.name, 'worker-3', 'auto teammate name')
     includes(texts, '自动作答', 'autoAnswer toggle')
+    includes(texts, '即时汇报', 'reportMode toggle')
     includes(texts, '暂无待答', 'questions empty state')
     includes(texts, '待总督汇报', 'git state')
     includes(texts, '同步 GitHub', 'sync button')
@@ -1178,52 +1240,40 @@ async function runClient(reportFn) {
     equal(preview.props.disabled, true, 'preview is disabled without a url')
   })
 
-  await suite.checkAsync('an old workspace row click takes its sessions over a new governor', async () => {
+  await suite.checkAsync('an old workspace row click opens its latest session without building a governor', async () => {
     const calls = []
     const bundle = loadBundle({
       fetch: (url, init) => {
         calls.push({ url, init })
-        if (url.includes('/api/governor/takeover')) {
-          return Promise.resolve({ ok: true, json: async () => ({ ok: true, workers: ['s-old-1', 's-old-2'], delivered: true }) })
-        }
         if (url.includes('/api/governor/bind')) {
           return Promise.resolve({ ok: true, json: async () => ({ ok: true, bind: null }) })
         }
         return Promise.resolve({ ok: true, json: async () => ({ ok: true }) })
       },
     })
-    const { setWorkspace, ensureGovernor, govBinds, pendingTakeover, latest } = bundle.internals
+    const { setWorkspace, govBinds, latest } = bundle.internals
     latest.wsList = [{ workspaceId: 'w-old', title: '老工作区', sessionIds: ['s-old-1', 's-old-2'] }]
     latest.wsSessions = { 'w-old': ['s-old-1', 's-old-2'] }
     setWorkspace('w-old')
     await new Promise((resolve) => setTimeout(resolve, 0))
     equal(bundle.tabOpenCalls.length, 1, 'the governor tab opens right away')
-    equal(bundle.startCalls.join(','), 'w-old', 'a new governor session is started')
-    equal(pendingTakeover.has('w-old'), true, 'the takeover is pending')
-    equal(bundle.openCalls.length, 0, 'no old session is opened as if it were the governor')
-    // 看护轮询 diff 出新会话 → POST /takeover 收编手下
-    ensureGovernor([{ workspaceId: 'w-old', title: '老工作区', sessionIds: ['s-old-1', 's-old-2', 's-gov-new'] }], true)
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    const takeover = calls.find((entry) => entry.url.includes('/api/governor/takeover'))
-    assert(takeover !== undefined, 'takeover was posted')
-    const payload = JSON.parse(takeover.init.body)
-    equal(payload.workspace, 'w-old', 'workspace id')
-    equal(payload.governor, 's-gov-new', 'the fresh session is the governor')
-    equal(payload.sessions.join(','), 's-old-1,s-old-2', 'the old sessions are handed over')
-    equal(payload.title, '老工作区', 'the workspace title travels')
-    equal(govBinds['w-old'].governor, 's-gov-new', 'the bind is cached')
-    equal(govBinds['w-old'].workers.join(','), 's-old-1,s-old-2', 'the workers are cached')
-    equal(pendingTakeover.has('w-old'), false, 'pending is cleared')
-    equal(bundle.openCalls.includes('s-gov-new'), true, 'the governor session opens')
-    // 再点行：直接开总督会话，不再新建
-    setWorkspace('w-old')
-    equal(bundle.startCalls.length, 1, 'a bound workspace never starts another session')
-    equal(bundle.openCalls.filter((id) => id === 's-gov-new').length, 2, 'the governor opens again directly')
+    equal(bundle.startCalls.length, 0, 'old workspaces never get a forced governor session')
+    equal(bundle.openCalls.join(','), 's-old-2', 'the latest existing session opens instead')
+    equal(govBinds['w-old'], undefined, 'no bind is invented for old workspaces')
+    const bindGet = calls.find((entry) => entry.url.includes('/api/governor/bind'))
+    assert(bindGet !== undefined, 'the host mapping was consulted')
   })
 
-  suite.check('the panel resolves the governor from the bind, not the first session', () => {
+  suite.check('the panel resolves the governor from the bind and teammates from the official roster', () => {
     const bundle = loadBundle()
-    bundle.internals.govBinds.w1 = { governor: 's-gov', workers: ['s-a', 's-b'] }
+    bundle.internals.govBinds.w1 = { governor: 's-gov' }
+    bundle.internals.teamCache.w1 = {
+      members: [
+        { id: 's-a', name: 'worker-1', phase: 'active' },
+        { id: 's-b', name: 'worker-2', phase: 'active' },
+      ],
+      tasks: [],
+    }
     const panel = bundle.registrations.find((entry) => entry.registration.name === 'sidebar.right.pane.tab')
     const element = panel.Component({
       useTabInfo: () => ({ tab: { visible: true } }),
@@ -1233,11 +1283,26 @@ async function runClient(reportFn) {
     })
     const texts = textsOf(element).join(' | ')
     includes(texts, '阿尔法 总督', 'the top node is named workspace + governor')
-    includes(texts, '2 / 8', 'workers come from the bind')
+    includes(texts, '2 / 8', 'workers come from the official roster')
     equal(bundle.internals.latest.governorId, 's-gov', 'the cached scene names the bound governor')
+    const subNodes = findByClass(element, 'dsh-gov-node').filter((node) => node.props['data-gov-node'] === 'sub')
+    equal(subNodes.length, 2, 'two teammate nodes rendered')
+    const failedBundle = loadBundle()
+    const failedPanel = failedBundle.registrations.find((entry) => entry.registration.name === 'sidebar.right.pane.tab')
+    failedBundle.internals.govBinds.w2 = { governor: 's-gov' }
+    failedBundle.internals.teamCache.w2 = { members: [{ id: 's-x', name: 'worker-1', phase: 'failed' }], tasks: [] }
+    const failedElement = failedPanel.Component({
+      useTabInfo: () => ({ tab: { visible: true } }),
+      useWorkspaces: (pick) => pick({ items: [{ workspaceId: 'w2', title: '贝塔', sessionIds: ['s-gov', 's-x'] }] }),
+      useSessions: (pick) => pick({ byId: {} }),
+      useSessionStatus: (pick) => pick(new Map()),
+    })
+    const failedNodes = findByClass(failedElement, 'dsh-gov-node').filter((node) => node.props['data-gov-node'] === 'sub')
+    equal(failedNodes.length, 1, 'failed teammate still shows')
+    equal(failedNodes[0].props['data-state'], 'warning', 'failed phase maps to the warning lamp')
   })
 
-  suite.check('an unbound workspace with sessions shows the takeover empty state', () => {
+  suite.check('an unbound workspace with sessions shows the not-enabled empty state', () => {
     const bundle = loadBundle()
     const panel = bundle.registrations.find((entry) => entry.registration.name === 'sidebar.right.pane.tab')
     const element = panel.Component({
@@ -1247,7 +1312,7 @@ async function runClient(reportFn) {
       useSessionStatus: (pick) => pick(new Map()),
     })
     const texts = textsOf(element).join(' | ')
-    includes(texts, '正在接管工作区…', 'the stage waits for the takeover')
+    includes(texts, '老工作区未启用总督', 'old workspaces stay out of governor mode')
     equal(bundle.internals.latest.governorId, null, 'no session is mistaken for the governor')
     const govNodes = findByClass(element, 'dsh-gov-node').filter((node) => node.props['data-gov-node'] === 'gov')
     equal(govNodes.length, 0, 'no governor node without a bind')
@@ -1269,31 +1334,49 @@ function runPrompt(reportFn) {
     workspaceId: 'w1',
     workspaceTitle: '阿尔法',
     sessions: ['s-a', 's-b'],
-    settings: { autoAnswer: false, autostart: true },
+    settings: { autoAnswer: false, autostart: true, reportMode: 'wake' },
+  })
+  const quietPrompt = buildGovernorPrompt({
+    baseUrl: base,
+    workspaceId: 'w1',
+    workspaceTitle: '阿尔法',
+    sessions: [],
+    settings: { autoAnswer: false, autostart: true, reportMode: 'quiet' },
   })
 
   suite.check('the prompt is self-contained', () => {
     includes(prompt, `${base}/api/governor`, 'api base')
-    includes(prompt, '/api/governor/roster', 'roster endpoint')
     includes(prompt, '/api/governor/transcript', 'transcript endpoint')
     includes(prompt, '/api/governor/questions', 'questions endpoint')
-    includes(prompt, '/api/governor/prompt', 'prompt endpoint')
     includes(prompt, '/api/governor/answer', 'answer endpoint')
     includes(prompt, '/api/governor/command', 'command endpoint')
     includes(prompt, '/api/governor/settings', 'settings endpoint')
     includes(prompt, '/api/governor/git-state', 'git-state endpoint')
-    includes(prompt, '/api/governor/bootstrap', 'bootstrap endpoint')
-    includes(prompt, '/api/governor/report', 'report endpoint')
-    includes(prompt, '/api/governor/reports', 'reports endpoint')
     includes(prompt, '阿尔法', 'workspace title')
-    includes(prompt, 's-a、s-b', 'worker sessions listed')
+    includes(prompt, 's-a、s-b', 'known sessions listed')
+    equal(prompt.includes('/api/governor/report'), false, 'the retired report inbox is gone')
+    equal(prompt.includes('/api/governor/takeover'), false, 'the retired takeover route is gone')
   })
 
-  suite.check('briefing and pending-queue discipline is spelled out', () => {
-    includes(prompt, '简报', 'the briefing section exists')
-    includes(prompt, '不会唤醒', 'briefings never wake the governor')
-    includes(prompt, '待发区', 'busy workers get queued, not interrupted')
-    includes(prompt, 'running=true', 'the busy signal is named')
+  suite.check('team operations run on the official Agent Teams tools', () => {
+    includes(prompt, 'spawn_teammate', 'teammate creation is the official tool')
+    includes(prompt, 'send_message', 'the official mailbox is the dispatch path')
+    includes(prompt, 'list_agents', 'roster via the official tool')
+    includes(prompt, 'wait_agent', 'change waiting without waking anyone')
+    includes(prompt, 'interrupt_agent', 'interrupt is the official tool')
+    includes(prompt, 'team_task_create', 'the shared task board')
+    includes(prompt, 'Team Lead', 'the governor is the official lead')
+    includes(prompt, '上限 8', 'the official member cap is stated')
+  })
+
+  suite.check('report modes: wake messages the lead, quiet uses the task board', () => {
+    includes(prompt, 'reportMode＝即时汇报', 'wake mode is stated')
+    includes(prompt, 'send_message({target:"lead"})', 'wake briefings go through the mailbox')
+    includes(prompt, '唤醒', 'wake mode admits the lead gets woken')
+    includes(quietPrompt, 'reportMode＝静默简报', 'quiet mode is stated')
+    includes(quietPrompt, '任务板', 'quiet briefings land on the task board')
+    includes(quietPrompt, '不唤醒你', 'quiet mode never wakes the governor')
+    includes(prompt, '原生待发区', 'busy teammates queue instead of being interrupted')
     includes(prompt, '用户明确要求停止', 'only the user may interrupt')
   })
 
@@ -1325,8 +1408,10 @@ function runPrompt(reportFn) {
     equal(JSON.stringify(normaliseSessions(['a', { id: 'b' }, '', null, 42])), JSON.stringify(['a', 'b']), 'mixed shapes')
     const many = normaliseSessions(Array.from({ length: 20 }, (_, i) => 's' + i))
     equal(many.length, 8, 'capped at 8')
-    equal(JSON.stringify(normaliseSettings(null)), JSON.stringify({ autoAnswer: false, autostart: true }), 'defaults')
-    equal(JSON.stringify(normaliseSettings({ autoAnswer: true })), JSON.stringify({ autoAnswer: true, autostart: true }), 'partial input')
+    equal(JSON.stringify(normaliseSettings(null)), JSON.stringify({ autoAnswer: false, autostart: true, reportMode: 'wake' }), 'defaults')
+    equal(JSON.stringify(normaliseSettings({ autoAnswer: true })), JSON.stringify({ autoAnswer: true, autostart: true, reportMode: 'wake' }), 'partial input')
+    equal(JSON.stringify(normaliseSettings({ reportMode: 'quiet' })), JSON.stringify({ autoAnswer: false, autostart: true, reportMode: 'quiet' }), 'quiet accepted')
+    equal(JSON.stringify(normaliseSettings({ reportMode: 'loud' })), JSON.stringify({ autoAnswer: false, autostart: true, reportMode: 'wake' }), 'unknown mode falls back to wake')
   })
 
   return reportFn(suite)

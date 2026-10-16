@@ -1,9 +1,11 @@
 /**
  * dsh-governor-mode —— 宿主半（/api/governor 控制平面）。
  *
- * 路由十三条：roster / transcript / questions / prompt / answer / command / settings /
- * git-state / bootstrap，加插件内部的 bind（总督绑定持久化）/ takeover（老工作区接管）/
- * report / reports（手下简报收件箱）。全部挂在 DSH web profile
+ * 路由十二条：roster / transcript / questions / prompt / answer / command / settings /
+ * git-state / bootstrap / bind（workspace→总督会话的最小映射），加 team（读官方
+ * Agent Teams 投影）/ spawn（经官方 agentTeams 服务新建队友）。团队关系本身
+ * （成员上限 8、信箱派发、任务板、中断）全部由官方 dsh-experimental-agent-team
+ * 服务负责，本插件只读它的面、不另造一套。全部挂在 DSH web profile
  * 的 webServer 通道上（plus-menu 的 /api/plus-menu/mcp 与 token-hud 的
  * /api/token-hud/usage 同款已验证通路），提示词里的 URL 尽力经
  * connection.authenticatedUrl 折凭据；没有 webServer 载体时保持惰性，
@@ -32,29 +34,23 @@ const MAX_TEXT = 4000
 /** 待答问题扫描回看的窗口大小。 */
 const PENDING_SCAN_EVENTS = 400
 
-/** /settings 的默认值（内存态，无记录即默认）。 */
-export const DEFAULT_SETTINGS = { autoAnswer: false, autostart: true }
-
 /** 提示词里 URL 的默认基址（DSH Web GUI 的环回端口）。 */
 const DEFAULT_BASE_URL = 'http://127.0.0.1:19387'
 
-/** 一个总督最多带 8 个手下（与浏览器半 MAX_SUB、提示词 MAX_WORKERS 一致）。 */
-const MAX_WORKERS = 8
+/** /settings 的默认值（内存态，无记录即默认）。reportMode：wake＝手下完工给总督发消息（官方默认，会唤醒总督）；quiet＝只记任务板，不打扰总督。 */
+export const DEFAULT_SETTINGS = { autoAnswer: false, autostart: true, reportMode: 'wake' }
 
-/** 每个工作区的简报收件箱封顶条数（超出丢最旧）。 */
-const MAX_REPORTS = 50
+/** 官方团队层的成员上限（profile patch 里 maxMembers: 8），仅用于面板展示与提示词文案。 */
+const MAX_WORKERS = 8
 
 /** 本插件的路由表，供测试直接驱动（照 session-bridge）。 */
 export const routes = []
 
-/** 开关存储：workspace → { autoAnswer, autostart }。内存态，卸载即失效。 */
+/** 开关存储：workspace → { autoAnswer, autostart, reportMode }。内存态，卸载即失效。 */
 const settingsStore = new Map()
 
-/** 总督绑定内存覆盖层：workspace → { governor, workers, updatedAt }（落盘失败仍生效）。 */
+/** 总督映射内存覆盖层：workspace → { governor, updatedAt }（落盘失败仍生效）。 */
 const bindsOverlay = new Map()
-
-/** 手下简报收件箱：workspace → [{ session, text, time }]（内存态，封顶 MAX_REPORTS）。 */
-const reportInbox = new Map()
 
 /**
  * 以 JSON 应答。
@@ -362,35 +358,30 @@ function readBindsFile(file) {
 }
 
 /**
- * 读一个工作区的总督绑定：内存覆盖层优先于文件；形状不对视为无绑定。
+ * 读一个工作区的总督会话映射：内存覆盖层优先于文件；形状不对视为无映射。
+ * 手下（队友）关系不在这里——那是官方 agentTeams 花名册的唯一真源。
  * @param file - 绑定文件路径。
  * @param workspace - 工作区 id。
- * @returns `{ governor, workers, updatedAt }` 或 null。
+ * @returns `{ governor, updatedAt }` 或 null。
  */
 function readBind(file, workspace) {
   const overlay = bindsOverlay.get(workspace)
   const raw = overlay !== undefined ? overlay : readBindsFile(file)[workspace]
-  if (raw === null || typeof raw !== 'object' || typeof raw.governor !== 'string' || raw.governor === '') return null
-  const workers = Array.isArray(raw.workers)
-    ? raw.workers.filter((id) => typeof id === 'string' && id !== '' && id !== raw.governor).slice(0, MAX_WORKERS)
-    : []
-  return { governor: raw.governor, workers, updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : null }
+  if (raw === null || typeof raw !== 'object') return null
+  const governor = typeof raw.governor === 'string' && raw.governor !== '' ? raw.governor : (typeof raw === 'string' && raw !== '' ? raw : '')
+  if (governor === '') return null
+  return { governor, updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : null }
 }
 
 /**
- * 写一个工作区的总督绑定：先进内存覆盖层，再尽力落盘（落盘失败静默）。
+ * 写一个工作区的总督会话映射：先进内存覆盖层，再尽力落盘（落盘失败静默）。
  * @param file - 绑定文件路径。
  * @param workspace - 工作区 id。
  * @param governor - 总督会话 id。
- * @param workers - 手下会话 id 列表。
- * @returns 写入的绑定。
+ * @returns 写入的映射。
  */
-function writeBind(file, workspace, governor, workers) {
-  const entry = {
-    governor,
-    workers: workers.filter((id) => id !== governor).slice(0, MAX_WORKERS),
-    updatedAt: new Date().toISOString(),
-  }
+function writeBind(file, workspace, governor) {
+  const entry = { governor, updatedAt: new Date().toISOString() }
   bindsOverlay.set(workspace, entry)
   try {
     const all = readBindsFile(file)
@@ -402,55 +393,116 @@ function writeBind(file, workspace, governor, workers) {
 }
 
 /**
- * 防御式停止一个会话：agent/session 上的 stop/kill/abort/close 等候选方法逐一尝试，
- * 第一个成功的赢；全部失败如实回报，绝不假装停掉了。
- * @param ctx - 插件上下文。
- * @param sessionId - 会话 id。
- * @returns `{ ok, via }` 或 `{ ok: false, error }`。
+ * 把总督会话事件流里的官方 team/* 事件折叠成花名册与任务板（照
+ * dsh-experimental-agent-team 投影的最小复制，只读不写）。形状不认识的事件
+ * 一律跳过，绝不崩；成员上限的真相在官方服务里，这里只是展示用投影。
+ * @param events - 总督会话的事件数组。
+ * @returns `{ members, tasks, queued, delivered }`。
  */
-export async function stopSession(ctx, sessionId) {
-  const candidates = []
-  const agents = ctx.get('agents')
-  const agent = agents !== undefined && agents !== null && typeof agents.get === 'function' ? agents.get(sessionId) : undefined
-  if (agent !== undefined && agent !== null) {
-    for (const method of ['stop', 'kill', 'abort', 'cancel', 'interrupt', 'close']) {
-      if (typeof agent[method] === 'function') candidates.push({ via: 'agent.' + method, run: () => agent[method]() })
+export function foldTeamEvents(events) {
+  const members = []
+  const tasks = new Map()
+  const queued = []
+  const delivered = new Set()
+  const list = Array.isArray(events) ? events : []
+  for (const event of list) {
+    const data = event?.data
+    if (data === null || typeof data !== 'object') continue
+    switch (event?.type) {
+      case 'team/member': {
+        const member = data.member
+        if (member === null || typeof member !== 'object' || typeof member.id !== 'string') break
+        const index = members.findIndex((candidate) => candidate.id === member.id)
+        const row = {
+          id: member.id,
+          name: typeof member.name === 'string' ? member.name : '',
+          phase: member.phase === 'active' || member.phase === 'failed' ? member.phase : 'provisioning',
+          description: typeof member.description === 'string' ? member.description : '',
+          context: member.context === 'fork' ? 'fork' : 'fresh',
+        }
+        if (index < 0) members.push(row)
+        else members[index] = row
+        break
+      }
+      case 'team/task': {
+        const task = data.task
+        if (task === null || typeof task !== 'object' || typeof task.id !== 'string') break
+        tasks.set(task.id, {
+          id: task.id,
+          revision: Number.isFinite(task.revision) ? task.revision : 0,
+          subject: typeof task.subject === 'string' ? task.subject : '',
+          status: task.status === 'in_progress' || task.status === 'completed' || task.status === 'deleted' ? task.status : 'pending',
+          ownerId: typeof task.ownerId === 'string' ? task.ownerId : null,
+        })
+        break
+      }
+      case 'team/message/queued': {
+        const message = data.message
+        if (message === null || typeof message !== 'object' || typeof message.id !== 'string') break
+        queued.push({ id: message.id, senderName: typeof message.senderName === 'string' ? message.senderName : '', targetId: typeof message.targetId === 'string' ? message.targetId : '' })
+        break
+      }
+      case 'team/message/delivered':
+        if (typeof data.messageId === 'string') delivered.add(data.messageId)
+        break
+      default:
+        break
     }
   }
-  const session = liveSession(ctx, sessionId)
-  if (session !== undefined && session !== null) {
-    for (const method of ['stop', 'abort', 'cancel', 'interrupt', 'close']) {
-      if (typeof session[method] === 'function') candidates.push({ via: 'session.' + method, run: () => session[method]() })
-    }
+  return {
+    members,
+    tasks: Array.from(tasks.values()).filter((task) => task.status !== 'deleted'),
+    queued,
+    delivered: Array.from(delivered),
   }
-  const errors = []
-  for (const candidate of candidates) {
-    try {
-      await candidate.run()
-      return { ok: true, via: candidate.via }
-    } catch (error) {
-      errors.push(candidate.via + ' → ' + String(error && error.message).slice(0, 120))
-    }
-  }
-  if (candidates.length === 0) return { ok: false, error: 'no stop method on agent/session for ' + sessionId }
-  return { ok: false, error: errors.join(' | ') }
 }
 
 /**
- * 手下简报纪律的一次性注入文本（接管老工作区时逐会话发一份）。
- * @param base - 已折凭据的 API 基址。
- * @param workspaceId - 工作区 id。
- * @param sessionId - 手下会话 id。
+ * 经面板 /spawn 新建队友时附加的一次性纪律文本（官方工具自带的身份提醒之外，
+ * 补上欧创的 git 纪律与按 reportMode 的汇报方式）。
  * @param workspaceTitle - 工作区名。
- * @returns 提示词文本。
+ * @param reportMode - 'wake' | 'quiet'。
+ * @returns 纪律文本。
  */
-export function workerBriefingPrompt(base, workspaceId, sessionId, workspaceTitle) {
-  const url = String(base).replace(/\/+$/, '') + ROUTE_PREFIX + '/report'
-  return [
-    `你是「${workspaceTitle}」工作区的一名手下会话（本插件的简报纪律，一次性告知）。`,
-    '每当用户直接在你这个会话里下达任务、你完成之后，向总督提交一份简报（只是留言进收件箱，不会唤醒总督）：',
-    `curl -X POST "${url}" -H "content-type: application/json" -d '{"workspace":"${workspaceId}","session":"${sessionId}","text":"用户输入了什么＋你做了什么＋结果与判据（100字内）"}'`,
-  ].join('\n')
+export function teammateBriefing(workspaceTitle, reportMode) {
+  const lines = [
+    `（欧创总督模式纪律，一次性告知）你在「${workspaceTitle}」工作区当队友，总督会话是你们的 Team Lead。`,
+    '- 改动只在 `sub/<你的队友名>` 分支上做，不碰 dev、不碰 release；结论先行汇报，证据挂文件:行号。',
+  ]
+  if (reportMode === 'quiet') {
+    lines.push('- 完工后把结果写进共享任务板（team_task_update complete，描述里写清用户输入了什么、你做了什么、结果如何），**不要**给 lead 发消息——总督只在用户问起时读任务板。')
+  } else {
+    lines.push('- 完工后用 send_message({ target: "lead" }) 交简报：用户输入了什么、你做了什么、结果与判据（100 字内）。')
+  }
+  return lines.join('\n')
+}
+
+/**
+ * 经官方 agentTeams 信箱给队友/总督发消息（/prompt 的原生通路）。
+ * 服务缺席或总督 agent 不在场时回 `{ ok:false, fatal:false }`（调用方退回老路）；
+ * 服务在、调用抛错（如队友名不认识）回 fatal 409，如实回报。
+ * @param ctx - 插件上下文。
+ * @param leadId - 总督会话 id（作为 caller 的活 agent）。
+ * @param targetName - 队友名或 "lead"。
+ * @param text - 消息正文。
+ * @returns `{ ok, via, status }` 或 `{ ok:false, fatal, status?, error? }`。
+ */
+async function teamSend(ctx, leadId, targetName, text) {
+  const teams = ctx.get('agentTeams')
+  if (teams === undefined || teams === null || typeof teams.sendMessage !== 'function') return { ok: false, fatal: false }
+  const agents = ctx.get('agents')
+  const caller = agents !== undefined && agents !== null && typeof agents.get === 'function' ? agents.get(leadId) : undefined
+  if (caller === undefined || caller === null) return { ok: false, fatal: false }
+  try {
+    const result = await teams.sendMessage(caller, {
+      target: targetName,
+      content: [{ type: 'text', text }],
+      signal: new AbortController().signal,
+    })
+    return { ok: true, via: 'agentTeams.sendMessage', status: result !== null && typeof result === 'object' ? result.status : undefined }
+  } catch (error) {
+    return { ok: false, fatal: true, status: 409, error: String(error && error.message) }
+  }
 }
 
 /**
@@ -655,13 +707,34 @@ function mountRoutes(ctx, webServer, config, connection) {
     sendJson(res, 200, { ok: true, questions: found })
   })
 
-  /** POST /prompt —— 给会话发提示词（subagents.prompt，防御式探测）。 */
+  /**
+   * POST /prompt —— 给会话发提示词。带 {lead, target} 时优先走官方 agentTeams
+   * 信箱（sendMessage）：在跑的队友在最近步骤边界收消息、不打断，不在跑的会被
+   * 唤醒——这就是原生「待发区」。官方通路缺席时退回 subagents.prompt 老路。
+   */
   servePost(`${ROUTE_PREFIX}/prompt`, async (req, res) => {
     const body = await readJson(req)
-    const sessionId = typeof body.session === 'string' ? body.session.trim() : ''
     const text = typeof body.text === 'string' ? body.text : ''
-    if (sessionId === '' || text === '') {
-      sendJson(res, 400, { ok: false, error: 'session and text are required' })
+    if (text === '') {
+      sendJson(res, 400, { ok: false, error: 'text is required' })
+      return
+    }
+    const lead = typeof body.lead === 'string' ? body.lead.trim() : ''
+    const target = typeof body.target === 'string' ? body.target.trim() : ''
+    if (lead !== '' && target !== '') {
+      const viaTeam = await teamSend(ctx, lead, target, text)
+      if (viaTeam.ok === true) {
+        sendJson(res, 200, { ok: true, lead, target, via: viaTeam.via, status: viaTeam.status ?? null })
+        return
+      }
+      if (viaTeam.fatal === true) {
+        sendJson(res, viaTeam.status, { ok: false, error: viaTeam.error })
+        return
+      }
+    }
+    const sessionId = typeof body.session === 'string' ? body.session.trim() : ''
+    if (sessionId === '') {
+      sendJson(res, 400, { ok: false, error: 'session is required when lead+target are absent' })
       return
     }
     const outcome = await promptSession(ctx, sessionId, text)
@@ -768,6 +841,13 @@ function mountRoutes(ctx, webServer, config, connection) {
         }
         next[key] = incoming[key]
       }
+      if (incoming.reportMode !== undefined) {
+        if (incoming.reportMode !== 'wake' && incoming.reportMode !== 'quiet') {
+          sendJson(res, 400, { ok: false, error: 'settings.reportMode must be "wake" or "quiet"' })
+          return
+        }
+        next.reportMode = incoming.reportMode
+      }
       const merged = { ...settingsFor(workspace), ...next }
       settingsStore.set(workspace, merged)
       sendJson(res, 200, { ok: true, workspace, settings: merged })
@@ -830,7 +910,7 @@ function mountRoutes(ctx, webServer, config, connection) {
     sendJson(res, 200, { ok: true, session: sessionId, length: prompt.length, via: outcome.via })
   })
 
-  /** GET/POST /bind —— 总督绑定：workspace → { governor, workers }，文件持久化。 */
+  /** GET/POST /bind —— workspace → 总督会话的最小映射（谁是总督）；手下关系在官方花名册里。 */
   route(`${ROUTE_PREFIX}/bind`, ['GET', 'HEAD', 'POST'], async (req, res) => {
     if (req.method === 'POST') {
       const body = await readJson(req)
@@ -840,10 +920,7 @@ function mountRoutes(ctx, webServer, config, connection) {
         sendJson(res, 400, { ok: false, error: 'workspace and governor are required' })
         return
       }
-      const workers = Array.isArray(body.workers)
-        ? body.workers.filter((id) => typeof id === 'string' && id !== '' && id !== governor).slice(0, MAX_WORKERS)
-        : []
-      const entry = writeBind(resolved.bindsPath, workspace, governor, workers)
+      const entry = writeBind(resolved.bindsPath, workspace, governor)
       sendJson(res, 200, { ok: true, workspace, bind: entry })
       return
     }
@@ -856,80 +933,69 @@ function mountRoutes(ctx, webServer, config, connection) {
     sendJson(res, 200, { ok: true, workspace, bind: readBind(resolved.bindsPath, workspace) })
   })
 
-  /**
-   * POST /takeover —— 老工作区接管（原子）：新建的总督会话 + 已有会话收编为手下
-   * （封顶 8，超出的最旧会话逐个防御式停止），写绑定，注入总督提示词，
-   * 并给每个手下一次性注入简报纪律。
-   */
-  servePost(`${ROUTE_PREFIX}/takeover`, async (req, res) => {
-    const body = await readJson(req)
-    const workspace = typeof body.workspace === 'string' ? body.workspace.trim() : ''
-    const governor = typeof body.governor === 'string' ? body.governor.trim() : ''
-    if (workspace === '' || governor === '') {
-      sendJson(res, 400, { ok: false, error: 'workspace and governor are required' })
+  /** GET /team —— 从总督会话事件流折叠官方团队花名册与任务板（独立 fold，不依赖服务在场）。 */
+  serve(`${ROUTE_PREFIX}/team`, async (req, res) => {
+    const params = new URL(req.url, 'http://127.0.0.1').searchParams
+    const sessionId = params.get('session')
+    if (sessionId === null || sessionId === '') {
+      sendJson(res, 400, { ok: false, error: 'session is required' })
       return
     }
-    const title = typeof body.title === 'string' && body.title !== '' ? body.title : workspace
-    const sessions = (Array.isArray(body.sessions) ? body.sessions : [])
-      .filter((id) => typeof id === 'string' && id !== '' && id !== governor)
-    const workers = sessions.slice(Math.max(0, sessions.length - MAX_WORKERS))
-    const stale = sessions.slice(0, Math.max(0, sessions.length - MAX_WORKERS))
-    const stopped = []
-    for (const id of stale) {
-      const outcome = await stopSession(ctx, id)
-      stopped.push({ session: id, ok: outcome.ok === true, via: outcome.via, error: outcome.error })
+    const session = liveSession(ctx, sessionId)
+    if (session === undefined || session === null) {
+      sendJson(res, 200, { ok: true, session: sessionId, live: false, members: [], tasks: [], queued: [], delivered: [], maxMembers: MAX_WORKERS })
+      return
     }
-    writeBind(resolved.bindsPath, workspace, governor, workers)
-    const prompt = buildGovernorPrompt({
-      baseUrl: resolved.base,
-      workspaceId: workspace,
-      workspaceTitle: title,
-      sessions: workers,
-      settings: settingsFor(workspace),
-    })
-    const delivered = await promptSession(ctx, governor, prompt)
-    let briefed = 0
-    for (const id of workers) {
-      const outcome = await promptSession(ctx, id, workerBriefingPrompt(resolved.base, workspace, id, title))
-      if (outcome.ok === true) briefed += 1
-    }
+    const events = typeof session.snapshotEvents === 'function' ? session.snapshotEvents(0) : []
+    const team = foldTeamEvents(events)
     sendJson(res, 200, {
       ok: true,
-      workspace,
-      governor,
-      workers,
-      stopped,
-      delivered: delivered.ok === true,
-      briefed,
+      session: sessionId,
+      live: true,
+      members: team.members,
+      tasks: team.tasks,
+      queued: team.queued,
+      delivered: team.delivered,
+      maxMembers: MAX_WORKERS,
     })
   })
 
-  /** POST /report —— 手下简报收件箱（不唤醒总督，只留言；每工作区封顶 50）。 */
-  servePost(`${ROUTE_PREFIX}/report`, async (req, res) => {
+  /** POST /spawn —— 经官方 agentTeams 服务新建队友（上限 8 由官方校验，超限如实回错）。 */
+  servePost(`${ROUTE_PREFIX}/spawn`, async (req, res) => {
     const body = await readJson(req)
-    const workspace = typeof body.workspace === 'string' ? body.workspace.trim() : ''
-    const session = typeof body.session === 'string' ? body.session.trim() : ''
-    const text = typeof body.text === 'string' ? body.text.trim().slice(0, 2000) : ''
-    if (workspace === '' || session === '' || text === '') {
-      sendJson(res, 400, { ok: false, error: 'workspace, session and text are required' })
+    const lead = typeof body.lead === 'string' ? body.lead.trim() : ''
+    const name = typeof body.name === 'string' ? body.name.trim() : ''
+    if (lead === '' || name === '') {
+      sendJson(res, 400, { ok: false, error: 'lead and name are required' })
       return
     }
-    const inbox = reportInbox.get(workspace) ?? []
-    inbox.push({ session, text, time: Date.now() })
-    while (inbox.length > MAX_REPORTS) inbox.shift()
-    reportInbox.set(workspace, inbox)
-    sendJson(res, 200, { ok: true, workspace, count: inbox.length })
-  })
-
-  /** GET /reports —— 读某工作区的简报收件箱（总督被用户问起时查阅）。 */
-  serve(`${ROUTE_PREFIX}/reports`, async (req, res) => {
-    const params = new URL(req.url, 'http://127.0.0.1').searchParams
-    const workspace = params.get('workspace')
-    if (workspace === null || workspace === '') {
-      sendJson(res, 400, { ok: false, error: 'workspace is required' })
+    const teams = ctx.get('agentTeams')
+    if (teams === undefined || teams === null || typeof teams.spawnTeammate !== 'function') {
+      sendJson(res, 501, { ok: false, error: 'agentTeams service unavailable: the official Agent Teams layer is not enabled' })
       return
     }
-    sendJson(res, 200, { ok: true, workspace, reports: reportInbox.get(workspace) ?? [] })
+    const agents = ctx.get('agents')
+    const caller = agents !== undefined && agents !== null && typeof agents.get === 'function' ? agents.get(lead) : undefined
+    if (caller === undefined || caller === null) {
+      sendJson(res, 409, { ok: false, error: 'no live agent for the governor session: open it first, then spawn' })
+      return
+    }
+    const workspace = typeof body.workspace === 'string' && body.workspace !== '' ? body.workspace : lead
+    const title = typeof body.title === 'string' && body.title !== '' ? body.title : workspace
+    const description = typeof body.description === 'string' && body.description !== '' ? body.description : name
+    const prompt = typeof body.prompt === 'string' && body.prompt !== '' ? body.prompt : '待命：等待总督派发任务。'
+    try {
+      const result = await teams.spawnTeammate(caller, {
+        name,
+        description,
+        prompt: [{ type: 'text', text: `${prompt}\n\n${teammateBriefing(title, settingsFor(workspace).reportMode)}` }],
+        context: body.context === 'fork' ? 'fork' : 'fresh',
+        signal: new AbortController().signal,
+      })
+      sendJson(res, 200, { ok: true, lead, member: result !== null && typeof result === 'object' && result.member !== undefined ? result.member : null })
+    } catch (error) {
+      sendJson(res, 409, { ok: false, error: String(error && error.message) })
+    }
   })
 
   const disposes = []
@@ -1012,6 +1078,6 @@ export const __internals = {
   sendJson, readJson, parseIdList, extractText, summariseEvent, pendingQuestion,
   rosterEntry, questionText, questionOptions, answersFromChoice, settingsFor,
   promptSession, registerOn, DEFAULT_SETTINGS, settingsStore, ROUTE_PREFIX,
-  bindsOverlay, readBind, writeBind, stopSession, workerBriefingPrompt,
-  reportInbox, MAX_WORKERS, MAX_REPORTS,
+  bindsOverlay, readBind, writeBind, foldTeamEvents, teammateBriefing,
+  teamSend, MAX_WORKERS,
 }

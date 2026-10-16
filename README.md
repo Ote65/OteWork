@@ -20,7 +20,7 @@
 | [`dsh-token-hud`](plugins/dsh-token-hud/README.md) | **侧栏 token 计量卡片**：累计用量、今日用量与缓存命中率，从会话投影缓存聚合而来。 |
 | [`dsh-session-bridge`](plugins/dsh-session-bridge/README.md) | **跨 Agent 会话桥**：把一个 DSH 会话经已鉴权的 `/api` 通道暴露给另一个 Agent（Codex、Trae…），提供发现文档、transcript、实时状态与一键复制的交接提示词。 |
 | [`dsh-element-picker`](plugins/dsh-element-picker/README.md) | **元素引用**：在内置浏览器预览里点选 UI 元素，一条精确的源码引用就落到输入框里。 |
-| [`dsh-governor-mode`](plugins/dsh-governor-mode/README.md) | **总督模式**：DSH 的默认且唯一工作模式——官方右侧栏的「总督」标签页面板（与浏览器 / 文档 / 编辑器并列切换；顶部总督节点 + 最多 8 个手下的 12×12 手绘像素人 + 状态呼吸光晕 + 直角走线 / 数据光流 + 选择题卡 + git 同步灯 + 输入井）；一级栏工作区行换成总督头像，点行按绑定打开总督会话（老工作区自动新建总督并接管既有会话，超 8 停旧），宿主半 `/api/governor` 十三路由控制平面供总督会话用 bash curl 驱动，手下完成任务向总督交简报、忙碌时派单走原生待发区，新建工作区即建总督，视觉照搬总督面板设计稿。 |
+| [`dsh-governor-mode`](plugins/dsh-governor-mode/README.md) | **总督模式**：DSH 的默认且唯一工作模式，建立在**官方实验层 Agent Teams** 上（本包 bundle patch 原样装配官方团队服务/工具/面板，成员上限 8 官方校验）——总督会话＝Team Lead，手下＝官方队友（派单走官方持久信箱＝原生待发区，在跑的不打断）；官方右侧栏的「总督」标签页面板（顶部总督节点 + ≤8 队友的 12×12 手绘像素人 + 状态呼吸光晕 + 直角走线 / 数据光流 + 选择题卡 + 汇报模式开关 + git 同步灯 + 输入井）；一级栏工作区行换成总督头像，点行按映射开总督会话（老工作区不启用），宿主半 `/api/governor` 十二路由控制平面读官方花名册投影、经官方服务 spawn，新建工作区即建总督，视觉照搬总督面板设计稿。 |
 | `dsh-picker-probe` | **诊断台**：开发 `dsh-element-picker` 时用来经真实 webview 桥驱动 picker 的一次性诊断插件，保留仅供复现。 |
 
 ## 仓库结构

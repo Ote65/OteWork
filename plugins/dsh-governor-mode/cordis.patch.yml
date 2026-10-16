@@ -1,7 +1,41 @@
 # dsh-governor-mode — profile bundle patch.
 #
-# 功能全部在浏览器半：宿主行只用于让 harness 下发本包的 dsh.client bundle，
-# 它的 apply 不做任何事。
+# 总督模式 v3 建立在官方实验层 Agent Teams 之上：照
+# @deepseek-ai/dsh-experimental-agent-team-profile 官方层原样装配
+# （团队服务 + 团队工具 + 官方团队面板，成员上限 8），并禁用被团队工具
+# 取代的官方子代理工具；再挂上本插件（总督面板 + /api/governor 通路）。
+# 移除本包即整套回到官方默认。
 - insert:
     - id: governor-mode
       name: dsh-governor-mode
+
+- id: tool-subagent-control
+  disabled: true
+
+- id: tool-subagent-list-agents
+  disabled: true
+
+- id: tool-subagent
+  disabled: true
+
+- id: tool-subagent-fork
+  disabled: true
+
+- insert:
+    - id: agent-team
+      name: '@deepseek-ai/dsh-experimental-agent-team'
+      config:
+        maxMembers: 8
+        maxTasks: 256
+        maxPendingMessagesPerMember: 64
+        maxMessageBytes: 65536
+        disposalTimeoutMs: 5000
+
+    - id: tool-agent-team
+      name: '@deepseek-ai/dsh-experimental-tool-agent-team'
+      config:
+        freshProvider: spawn
+        forkProvider: fork
+
+    - id: ui-agent-team
+      name: '@deepseek-ai/dsh-experimental-client-ui-agent-team'
