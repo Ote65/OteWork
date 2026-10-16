@@ -357,22 +357,17 @@ window.__ModuleLoader__.load({
 			'  background: transparent;',
 			'}',
 
-			/* 侧栏收起/展开滑移 —— 主人钦定（2026-10-16）：左移右移、非线性。
+			/* 侧栏收起/展开动画 —— 主人钦定（2026-10-16）：非线性缓动。
 			 * 宿主只在 data-animating 期间给 grid 列宽挂 .3s 过渡，且被
 			 * prefers-reduced-motion 整个掐掉。这里用更高优先级换成更慢、
-			 * 收尾更强的 expo 缓动，并给侧栏列本身加 translateX 滑移，
-			 * 让内容是真正向左滑出/向右滑入，而不是被列宽剪掉。 */
+			 * 收尾更强的 expo 缓动；列宽收窄本身就是内容左移的滑移效果。
+			 * 注意：收起态是窄版缩略栏（图标轨），绝不能给它加常驻位移，
+			 * 否则缩略栏被推出屏幕、用户无法展开（上一版翻车教训）。 */
 			'html[' + SKIN_ATTR + '] [class*="_frame"][data-animating]{',
 			'  transition: grid-template-columns 0.42s cubic-bezier(0.16, 1, 0.3, 1);',
 			'}',
 			'html[' + SKIN_ATTR + '] [class*="_frame"][data-animating] [class*="_handle"]{',
 			'  transition: left 0.42s cubic-bezier(0.16, 1, 0.3, 1);',
-			'}',
-			'html[' + SKIN_ATTR + '] [class*="_sidebarCol"]{',
-			'  transition: transform 0.42s cubic-bezier(0.16, 1, 0.3, 1);',
-			'}',
-			'html[' + SKIN_ATTR + '] [class*="_frame"][data-sidebar-collapsed] [class*="_sidebarCol"]{',
-			'  transform: translateX(-100%);',
 			'}',
 
 			/* §6.4 选中态左缘橙条：2px 锐利主条 + 内渗柔光做层次；inset 阴影不动盒模型。

@@ -230,9 +230,8 @@ export async function run(report) {
     includes(css, '[class*="_sidebarCol"] [class*="_fade"]', 'sidebar list fade killed')
     includes(css, '[class*="_frame"][data-animating]', 'collapse transition is overridden')
     includes(css, 'transition: grid-template-columns 0.42s cubic-bezier(0.16, 1, 0.3, 1);', 'column width eases with a strong expo curve')
-    includes(css, 'transition: transform 0.42s cubic-bezier(0.16, 1, 0.3, 1);', 'the sidebar column itself slides')
-    includes(css, '[class*="_frame"][data-sidebar-collapsed] [class*="_sidebarCol"]', 'collapsed state slides the column out')
-    includes(css, 'transform: translateX(-100%);', 'the slide is a real left-right move')
+    /* 回归锁：收起态是窄版缩略栏，皮肤绝不许给它加常驻位移（上版翻车）。 */
+    assert(css.includes('translateX') !== true, 'no persistent transform on the collapsed sidebar')
     includes(css, '[data-composer-card="true"]', 'composer card fill rule')
     includes(css, 'background-color: #212121;', 'composer card fill is the owner colour')
     includes(css, '[class*="_sidebarCol"] > div > [class*="_root"]', 'sidebar root rule')
