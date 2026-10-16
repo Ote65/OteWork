@@ -2,9 +2,11 @@
  * dsh-governor-mode —— 宿主半（/api/governor 控制平面）。
  *
  * 给总督会话的 bash curl 用的九条路由：roster / transcript / questions / prompt /
- * answer / command / settings / git-state / bootstrap。全部挂在 DSH 已鉴权的
- * connection.fetch 通道上（同官方 /api/file），提示词里的 URL 由
- * authenticatedUrl 折好凭据；没有 connection 载体时保持惰性，什么都不注册。
+ * answer / command / settings / git-state / bootstrap。全部挂在 DSH web profile
+ * 的 webServer 通道上（plus-menu 的 /api/plus-menu/mcp 与 token-hud 的
+ * /api/token-hud/usage 同款已验证通路），提示词里的 URL 尽力经
+ * connection.authenticatedUrl 折凭据；没有 webServer 载体时保持惰性，
+ * 什么都不注册。
  *
  * 游标契约、事件摘要、pendingQuestion 提取、answer/command 的服务调用手法
  * 均照 dsh-session-bridge（本仓各插件独立复制适配的既定模式）。
@@ -322,24 +324,24 @@ export function settingsFor(workspace) {
 }
 
 /**
- * 把一条路由挂上 connection.fetch 通道。
+ * 把一条路由挂上 webServer 通道（plus-menu 的 /api/plus-menu/mcp 与 token-hud
+ * 的 /api/token-hud/usage 走的同一条已验证通路）。
  *
- * `register` 的调用形状未实测（session-bridge 只在 README 记载走这条通道），
- * 所以按插件家族已知形状逐一尝试，全部失败返回 null——调用方据此知道这条
- * 路由没有挂上，绝不假装注册成功。
+ * `register` 的调用形状按插件家族已知形状逐一尝试，全部失败返回 null——
+ * 调用方据此知道这条路由没有挂上，绝不假装注册成功。
  *
- * @param connection - connection 载体。
+ * @param webServer - webServer 载体。
  * @param path - 完整路径（/api/governor/…）。
  * @param handler - Node 风格 (req, res) 处理器。
  * @returns 注销函数，或 null。
  */
-export function registerOn(connection, path, handler) {
-  const register = connection?.fetch?.register
+export function registerOn(webServer, path, handler) {
+  const register = webServer?.register
   if (typeof register !== 'function') return null
   const attempts = [
+    () => register({ kind: 'exact', path, handler }),
     () => register(path, handler),
     () => register({ path, handler }),
-    () => register({ kind: 'exact', path, handler }),
   ]
   for (const attempt of attempts) {
     try {
@@ -416,11 +418,12 @@ export async function promptSession(ctx, sessionId, text) {
  * 真实宿主直接驱动；挂载只是把同一些处理器再注册到通道上。
  *
  * @param ctx - 拥有各服务的上下文（Cordis scope）。
- * @param connection - connection 载体。
+ * @param webServer - webServer 载体（路由注册口）。
  * @param config - 已解析的插件配置。
+ * @param connection - 可选的 connection 载体（只用来折提示词里的凭据 URL）。
  * @returns 注销函数。
  */
-function mountRoutes(ctx, connection, config) {
+function mountRoutes(ctx, webServer, config, connection) {
   routes.length = 0
   const resolved = {
     base: String(config.baseUrl === undefined || config.baseUrl === '' ? DEFAULT_BASE_URL : config.baseUrl).replace(/\/+$/, ''),
@@ -428,7 +431,7 @@ function mountRoutes(ctx, connection, config) {
   }
   // 提示词里的 URL 要折进凭据总督会话的 curl 才不吃 401；折不了就原样给。
   try {
-    if (typeof connection.authenticatedUrl === 'function') {
+    if (connection != null && typeof connection.authenticatedUrl === 'function') {
       resolved.base = String(connection.authenticatedUrl(resolved.base)).replace(/\/+$/, '')
     }
   } catch (error) { /* authenticatedUrl 不可用时退回裸基址 */ }
@@ -699,7 +702,7 @@ function mountRoutes(ctx, connection, config) {
 
   const disposes = []
   for (const entry of routes) {
-    const dispose = registerOn(connection, entry.path, entry.handler)
+    const dispose = registerOn(webServer, entry.path, entry.handler)
     if (dispose !== null) disposes.push(dispose)
   }
   return () => {
@@ -710,7 +713,9 @@ function mountRoutes(ctx, connection, config) {
 }
 
 /**
- * 宿主插件体：connection 载体就绪时挂载全部路由，否则保持惰性。
+ * 宿主插件体：webServer 载体就绪时挂载全部路由，否则保持惰性。
+ * webServer 是 DSH web profile 的真实服务名（plus-menu 同款注入写法）；
+ * connection 不是服务名，只作为可选载体防御式尝试，用来折凭据 URL。
  *
  * @param ctx - Cordis 上下文。
  * @param config - profile patch 里的行配置（不导出 Config：resolveConfig 坑）。
@@ -718,20 +723,22 @@ function mountRoutes(ctx, connection, config) {
 export function apply(ctx, config = {}) {
   const safeConfig = config === null || typeof config !== 'object' ? {} : config
   if (typeof ctx?.inject === 'function') {
-    // 动态注入：没有 connection 载体时回调不跑，路由一条都不注册。
-    ctx.inject(['connection'], (scope) => {
+    // 动态注入：没有 webServer 载体时回调不跑，路由一条都不注册。
+    ctx.inject(['webServer'], (scope) => {
+      const webServer = scope?.webServer ?? (typeof scope?.get === 'function' ? scope.get('webServer') : undefined)
+      if (webServer === undefined || webServer === null) return
       const connection = scope?.connection ?? (typeof scope?.get === 'function' ? scope.get('connection') : undefined)
-      if (connection === undefined || connection === null) return
-      const dispose = mountRoutes(scope, connection, safeConfig)
+      const dispose = mountRoutes(scope, webServer, safeConfig, connection)
       if (typeof scope?.effect === 'function') {
         scope.effect(() => dispose, 'governor-mode: api routes')
       }
     })
     return
   }
+  const webServer = ctx?.webServer ?? (typeof ctx?.get === 'function' ? ctx.get('webServer') : undefined)
+  if (webServer === undefined || webServer === null) return
   const connection = ctx?.connection ?? (typeof ctx?.get === 'function' ? ctx.get('connection') : undefined)
-  if (connection === undefined || connection === null) return
-  const dispose = mountRoutes(ctx, connection, safeConfig)
+  const dispose = mountRoutes(ctx, webServer, safeConfig, connection)
   if (typeof ctx?.effect === 'function') {
     ctx.effect(() => dispose, 'governor-mode: api routes')
   }
@@ -741,10 +748,10 @@ export function apply(ctx, config = {}) {
 export const name = 'governor-mode'
 
 /**
- * 声明性依赖清单：宿主半的一切都挂在 connection 通道上。
+ * 不声明静态 inject：Cordis 把它当必需服务依赖，DSH web profile 里没有
+ * 名为 'connection' 的全局服务，声明即整条目激活失败（全仓其他插件均不声明）。
  * 真正的惰性由 apply 内的动态注入与防御读取保证，服务缺席时静默不注册。
  */
-export const inject = ['connection']
 
 /** 供离线测试用的内部面（照 v1 client.js 的做法）。 */
 export const __internals = {

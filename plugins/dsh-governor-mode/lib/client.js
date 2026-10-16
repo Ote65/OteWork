@@ -1468,7 +1468,9 @@ window.__ModuleLoader__.load({
 
     exports.name = 'governor-mode'
     exports.apply = apply
-    exports.inject = ['slots', 'layout', 'uiWorkspace']
+    // 只声明 'slots'（同 element-picker）：layout/uiWorkspace 不是 Cordis 客户端
+    // 服务名，声明即激活失败；对它们一律防御式访问，缺席时静默降级。
+    exports.inject = ['slots']
     exports.__internals = {
       state, rowsOf, stateOf, fusedState, titleOf, hashId, faceCells, pixelAvatar,
       measureWires, STYLESHEET, shouldPass, pollDelayMs, targetsOf, branchForSession,

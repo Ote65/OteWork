@@ -88,13 +88,20 @@ function fakeSession(events, options = {}) {
 
 function makeCtx(options = {}) {
   const sessions = new Map(options.sessions ?? [])
+  const registered = []
   const ctx = {
+    registered,
     effect(body) { return body() },
     inject(names, body) {
       body(Object.assign({}, ctx, {
+        webServer: {
+          register(route) {
+            registered.push(route)
+            return () => {}
+          },
+        },
         connection: {
           authenticatedUrl: (base) => base,
-          fetch: { register: () => () => {} },
         },
       }))
     },
@@ -176,13 +183,31 @@ async function runHost(reportFn) {
   const suite = createSuite('host')
 
   suite.check('registers all nine routes under /api/governor', () => {
-    boot()
+    const made = boot()
     equal(routes.length, 9, 'route count')
     const paths = routes.map((route) => route.path).join(' ')
     for (const name of ['/roster', '/transcript', '/questions', '/prompt', '/answer', '/command', '/settings', '/git-state', '/bootstrap']) {
       includes(paths, name, 'route present')
       includes(paths, ROUTE_PREFIX, 'under the governor prefix')
     }
+    // 挂载：九条全部注册到 webServer（plus-menu 同款通路），首选 kind:'exact' 形状。
+    equal(made.ctx.registered.length, 9, 'all routes mounted on the web server')
+    equal(made.ctx.registered[0].kind, 'exact', 'exact-kind registration shape')
+    includes(made.ctx.registered[0].path, '/api/governor/roster', 'mounted path')
+  })
+
+  await suite.checkAsync('no static inject export: dynamic webServer injection only', async () => {
+    // 静态 inject 是 Cordis 必需服务依赖，DSH web profile 没有 'connection'
+    // 服务名——声明即整条目激活失败（本插件在真机上踩过）。
+    const source = readFileSync(join(here, '..', 'lib', 'index.js'), 'utf8')
+    equal(/export const inject/.test(source), false, 'no static inject export')
+    const module = await import('../lib/index.js')
+    const names = []
+    const ctx = {
+      inject(list, body) { names.push(...list); body({ webServer: { register: () => () => {} } }) },
+    }
+    module.apply(ctx)
+    equal(names.join(','), 'webServer', 'dynamic injection targets webServer')
   })
 
   suite.check('a wrong method is a 405', async () => {
@@ -561,7 +586,7 @@ async function runClient(reportFn) {
     const bundle = loadBundle()
     equal(bundle.spec.id, 'dsh-governor-mode', 'bundle id')
     equal(bundle.exported.name, 'governor-mode', 'plugin name')
-    equal(bundle.exported.inject.join(','), 'slots,layout,uiWorkspace', 'inject list')
+    equal(bundle.exported.inject.join(','), 'slots', 'inject list (slots only, like element-picker)')
     equal(typeof bundle.exported.apply, 'function', 'apply is a function')
   })
 
