@@ -214,6 +214,7 @@ export async function run(report) {
     includes(css, '[class*="_triggerLabel"]', 'model/permission chip ellipsis')
     includes(css, 'text-overflow: ellipsis', 'ellipsis is armed')
     includes(css, 'li::marker', 'list marker colour')
+    includes(css, '[class*="_sidebarCol"] [class*="_fade"]', 'sidebar list fade killed')
     includes(css, '[data-composer-card="true"]', 'composer card fill rule')
     includes(css, 'background-color: #212121;', 'composer card fill is the owner colour')
     includes(css, '[class*="_sidebarCol"] > div > [class*="_root"]', 'sidebar root rule')

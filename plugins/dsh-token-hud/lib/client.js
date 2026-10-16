@@ -4,10 +4,10 @@
  * A token meter inside the **left sidebar**, in the shell's additive
  * `sidebar.footer.action` seat (directly above the Settings row).
  *
- * The layout is the supplied `TokenCard` design — a quiet header with a unit
- * switch, a dominant hero number with a quiet unit, a trend / cumulative
- * sub-line, an iOS hairline, then three rounded metric tiles, the cache one
- * carrying an activity ring that stretches to the tile's full height.
+ * The layout is the supplied `TokenCard` design — a dominant hero number with
+ * a quiet unit, a trend / cumulative sub-line, an iOS hairline, then three
+ * rounded metric tiles, the cache one carrying an activity ring sized to the
+ * text column beside it.
  *
  * Three things this file has to do that the original Tailwind component did not:
  *
@@ -105,13 +105,6 @@ window.__ModuleLoader__.load({
       'background:var(--dsw-alias-bg-layer-1,#fff);',
       'border:1px solid color-mix(in srgb,var(--dsw-alias-label-primary,#fff) 8%,transparent);',
       '}',
-      '[data-dsh-token-hud="unit"]{',
-      'background:none;border:0;padding:0.2em 0.5em;border-radius:0.7em;cursor:pointer;',
-      'font:inherit;font-size:1.1em;font-weight:500;line-height:1;',
-      'color:var(--dsw-alias-label-tertiary,rgba(231,235,243,.46));',
-      'transition:color .2s ease,background-color .2s ease;',
-      '}',
-      '[data-dsh-token-hud="unit"]:hover{color:var(--dsw-alias-label-primary,#e7ebf3);background:color-mix(in srgb,var(--dsw-alias-label-primary,#fff) 8%,transparent)}',
       // Collapsing the detail block: `0fr` animates a grid row to zero height,
       // which is the one way to transition to an intrinsic height without
       // measuring it in JS.
@@ -119,7 +112,7 @@ window.__ModuleLoader__.load({
       '[data-dsh-token-hud="details"]>div{overflow:hidden;min-height:0}',
       '[data-dsh-token-hud="ring"]{transition:stroke-dashoffset .5s ease-out}',
       '@media (prefers-reduced-motion:reduce){',
-      '[data-dsh-token-hud="card"],[data-dsh-token-hud="unit"],',
+      '[data-dsh-token-hud="card"],',
       '[data-dsh-token-hud="details"],[data-dsh-token-hud="ring"]{transition:none}',
       '}',
     ].join('')
@@ -134,16 +127,13 @@ window.__ModuleLoader__.load({
         cacheHit: '命中率',
         inputToken: '输入 Token',
         ioRatio: '输入/输出比',
-        unitLabel: '单位',
         yi: '亿',
         million: '百万',
         wan: '万',
-        unitHint: '点击切换单位（亿 / 百万）',
         trendHint: '今日为当日累计（尚未结束），昨日为整日',
         input: '输入',
         output: '输出',
         cacheRead: '缓存读',
-        collapsedTag: '· 已收纳',
         summaryToday: '今日',
         summaryCache: '缓存率',
         saved: '节约',
@@ -156,16 +146,13 @@ window.__ModuleLoader__.load({
         cacheHit: 'Cache hit rate',
         inputToken: 'Input',
         ioRatio: 'in:out',
-        unitLabel: 'Unit',
         yi: '×10⁸',
         million: '×10⁶',
         wan: '×10⁴',
-        unitHint: 'Switch units',
         trendHint: 'Today is still in progress; yesterday is a full day',
         input: 'In',
         output: 'Out',
         cacheRead: 'Cache read',
-        collapsedTag: '· Collapsed',
         summaryToday: 'Today',
         summaryCache: 'Cache',
         saved: 'Saved',
@@ -283,9 +270,10 @@ window.__ModuleLoader__.load({
         {
           'data-dsh-token-hud': 'ring', viewBox: '0 0 44 44',
           'aria-hidden': 'true',
-          // Stretches to the tile's full content height; the square viewBox plus
-          // `aspect-ratio` keeps it round, so its height is flush with the tile.
-          style: { flex: 'none', alignSelf: 'stretch', width: 'auto', aspectRatio: '1', transform: 'rotate(-90deg)' },
+          // A fixed 3.4em square: that is the text column's own height (label
+          // line + gap + value line), and a size in em cannot feed back into the
+          // row's height the way a stretched aspect-ratio box does.
+          style: { flex: 'none', width: '3.4em', height: '3.4em', transform: 'rotate(-90deg)' },
         },
         react.createElement('circle', {
           key: 'track', cx: 22, cy: 22, r: RING_RADIUS, fill: 'none',
@@ -344,11 +332,6 @@ window.__ModuleLoader__.load({
 
     var CARD = { boxSizing: 'border-box', fontSize: BASE_FONT, padding: '1.2em 1.2em 1.1em' }
 
-    var HEAD = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.8em', gap: '0.6em' }
-    var HEAD_LEFT = { display: 'flex', alignItems: 'center', gap: '0.7em', minWidth: 0 }
-    /** The "· 已收纳" suffix, shown only while collapsed. */
-    var TAG = { fontSize: '0.9em', color: L3, whiteSpace: 'nowrap' }
-
     var HERO = { marginBottom: '1em' }
     var HERO_LABEL_ROW = {
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -380,7 +363,8 @@ window.__ModuleLoader__.load({
     var HAIRLINE = { height: 1, marginBottom: '0.9em', background: 'color-mix(in srgb, ' + L1 + ' 10%, transparent)' }
 
     var GRID = { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.7em' }
-    var TILE = { display: 'flex', alignItems: 'stretch', gap: '0.5em', padding: '0.6em 0.7em', minWidth: 0 }
+    var TILE = { display: 'flex', flexDirection: 'column', padding: '0.6em 0.7em', minWidth: 0 }
+    var TILE_ROW = { display: 'flex', alignItems: 'center', gap: '0.5em', minWidth: 0 }
     var TILE_BODY = { display: 'flex', flexDirection: 'column', minWidth: 0, flex: '1 1 auto' }
     var TILE_HEAD = { display: 'flex', alignItems: 'center', gap: '0.3em', marginBottom: '0.2em', minWidth: 0, color: L2 }
     var TILE_LABEL = { fontSize: '0.95em', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }
@@ -401,21 +385,25 @@ window.__ModuleLoader__.load({
         { 'data-dsh-token-hud': 'tile', style: TILE },
         react.createElement(
           'div',
-          { style: TILE_BODY },
+          { style: TILE_ROW },
           react.createElement(
             'div',
-            { style: TILE_HEAD },
-            props.glyph,
-            react.createElement('span', { style: TILE_LABEL }, props.label),
+            { style: TILE_BODY },
+            react.createElement(
+              'div',
+              { style: TILE_HEAD },
+              props.glyph,
+              react.createElement('span', { style: TILE_LABEL }, props.label),
+            ),
+            react.createElement(
+              'div',
+              { style: TILE_VALUE },
+              react.createElement('span', { style: TILE_NUMBER }, props.value),
+              props.unit === '' || props.unit === undefined ? null : react.createElement('span', { style: TILE_UNIT }, props.unit),
+            ),
           ),
-          react.createElement(
-            'div',
-            { style: TILE_VALUE },
-            react.createElement('span', { style: TILE_NUMBER }, props.value),
-            props.unit === '' || props.unit === undefined ? null : react.createElement('span', { style: TILE_UNIT }, props.unit),
-          ),
+          props.extra === undefined ? null : props.extra,
         ),
-        props.extra === undefined ? null : props.extra,
       )
     }
 
@@ -475,9 +463,6 @@ window.__ModuleLoader__.load({
       var pair = react.useState(null)
       var payload = pair[0]
       var setPayload = pair[1]
-      var unitPair = react.useState('yi')
-      var unit = unitPair[0]
-      var setUnit = unitPair[1]
       // Read on every render rather than through a lazy initialiser, so the test
       // harness's plain `useState` stand-in keeps working.
       var collapsedPair = react.useState(readCollapsed() === true)
@@ -543,23 +528,11 @@ window.__ModuleLoader__.load({
         trendPercentage: typeof payload.trendPercentage === 'number' && Number.isFinite(payload.trendPercentage) ? payload.trendPercentage : null,
       }
 
-      var hero = formatTokens(metrics.heroTokens, unit)
+      var hero = formatTokens(metrics.heroTokens, 'yi')
       var todayFormatted = formatTokens(metrics.todayTokens, 'auto')
-      var input = formatTokens(metrics.inputTokens, unit === 'yi' ? 'yi' : 'million')
+      var input = formatTokens(metrics.inputTokens, 'yi')
       var cached = formatTokens(metrics.cachedTokens, 'auto')
       var ioRatio = metrics.inputTokens > 0 ? (metrics.outputTokens / metrics.inputTokens).toFixed(1) : '0.0'
-      var unitName = unit === 'yi' ? t('yi') : t('million')
-      /**
-       * Stop a click reaching the card, which toggles collapse on every click.
-       * @param event - the React click event, absent in tests.
-       */
-      var swallow = function (event) {
-        if (event !== undefined && event !== null && typeof event.stopPropagation === 'function') event.stopPropagation()
-      }
-      var toggleUnit = function (event) {
-        swallow(event)
-        setUnit(function (previous) { return previous === 'yi' ? 'million' : 'yi' })
-      }
       var toggleCollapsed = function () {
         setCollapsed(function (previous) {
           var next = previous !== true
@@ -644,25 +617,10 @@ window.__ModuleLoader__.load({
           style: BLOCK,
         },
         react.createElement(
-          'div',
-          { 'data-dsh-token-hud': 'card', style: CARD, onClick: toggleCollapsed },
-          // Header: the collapse tag and the unit switch.
-          react.createElement(
             'div',
-            { style: HEAD },
-            react.createElement(
-              'div',
-              { style: HEAD_LEFT },
-              collapsed ? react.createElement('span', { style: TAG }, t('collapsedTag')) : null,
-            ),
-            react.createElement(
-              'button',
-              { 'data-dsh-token-hud': 'unit', type: 'button', onClick: toggleUnit, title: t('unitHint') },
-              t('unitLabel') + '：' + unitName,
-            ),
-          ),
-          // Hero: the grand total and either the trend line or the collapsed
-          // summary.
+            { 'data-dsh-token-hud': 'card', style: CARD, onClick: toggleCollapsed },
+            // Hero: the grand total and either the trend line or the collapsed
+            // summary.
           react.createElement(
             'div',
             { style: HERO },

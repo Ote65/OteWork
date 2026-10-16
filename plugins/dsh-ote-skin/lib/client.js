@@ -305,6 +305,13 @@ window.__ModuleLoader__.load({
 			'  background-color: #292929;',
 			'}',
 
+			/* 侧栏会话列表底部的渐隐遮罩 —— 主人明令去掉（2026-10-16）。
+			 * 遮罩是宿主画的一个 24px 渐变层（_fade），这里只把它的背景清空，
+			 * 不动 display、不碰布局。 */
+			'html[' + SKIN_ATTR + '] [class*="_sidebarCol"] [class*="_fade"]{',
+			'  background: transparent;',
+			'}',
+
 			/* §6.4 选中态用左缘 2px 橙竖条；inset 阴影不动盒模型，不碰布局。 */
 			'html[' + SKIN_ATTR + '] [class*="_sessionRow"][class*="_selected"],',
 			'html[' + SKIN_ATTR + '] [class*="_projectRow"][class*="_selected"],',

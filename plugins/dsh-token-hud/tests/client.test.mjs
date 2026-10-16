@@ -211,7 +211,6 @@ function markersOf(node, out = []) {
 function render(options = {}) {
   const queue = [
     options.payload === undefined ? PAYLOAD : options.payload,
-    options.unit,
     options.collapsed,
   ]
   const bundle = loadBundle({ stateQueue: queue, lang: options.lang, store: options.store })
@@ -304,8 +303,7 @@ export async function run(report) {
 
     const card = findByMarker(element, 'card')
     equal(card.props.style.padding, '1.2em 1.2em 1.1em', 'card padding is relative')
-    const [header, hero, details] = card.props.children
-    equal(header.props.style.marginBottom, '0.8em', 'header gap')
+    const [hero, details] = card.props.children
     equal(hero.props.style.marginBottom, '1em', 'hero gap')
     const [hairline, grid] = details.props.children.props.children
     equal(hairline.props.style.height, 1, 'the hairline stays a real pixel')
@@ -355,7 +353,7 @@ export async function run(report) {
     // '亿' appears on both the hero and the input tile, so read the hero's own
     // unit off the tree rather than out of the text-keyed map.
     const card = findByMarker(element, 'card')
-    const heroRow = card.props.children[1].props.children[1]
+    const heroRow = card.props.children[0].props.children[1]
     const unit = Number.parseFloat(heroRow.props.children[1].props.style.fontSize)
     equal(hero, 3, 'hero number')
     equal(unit, 1.4, 'hero unit')
@@ -377,17 +375,15 @@ export async function run(report) {
     assert(style.textContent.includes('prefers-reduced-motion'), 'motion is opt-out')
   })
 
-  suite.check('lays out the design: header, hero, collapsible detail block', () => {
+  suite.check('lays out the design: hero, collapsible detail block', () => {
     const { element } = render()
     equal(
       markersOf(element).join(' > '),
-      'block > card > unit > trend > details > tile > tile > ring > tile',
+      'block > card > trend > details > tile > tile > ring > tile',
       'marker order',
     )
     const card = findByMarker(element, 'card')
-    const [header, hero, details] = card.props.children
-    equal(header.props.children.length, 2, 'header: collapse-tag slot + unit switch')
-    equal(header.props.children[1].type, 'button', 'the unit switch is a real button')
+    const [hero, details] = card.props.children
     equal(hero.props.children.length, 3, 'hero: label row, number row, sub-line')
     const [hairline, grid] = details.props.children.props.children
     equal(hairline.props.style.height, 1, 'hairline divider, inside the collapsible block')
@@ -399,18 +395,19 @@ export async function run(report) {
     const { element, bundle } = render()
     const grid = findByMarker(element, 'details').props.children.props.children[1]
     for (const tile of grid.props.children) {
-      const children = tile.props.children.filter((child) => child !== null && child !== undefined)
-      // A plain tile is just its column; the cache tile adds the ring beside it.
-      const body = children[0]
+      const row = tile.props.children
+      equal(row.props.style.alignItems, 'center', 'the text column and the ring share one row')
+      const body = row.props.children[0]
       equal(body.props.style.flexDirection, 'column', 'label and value stack in a column')
       const rows = body.props.children.filter((child) => child !== null && child !== undefined)
       equal(rows.length, 2, 'label row + value row, no caption line')
       equal(rows[0].props.style.marginBottom, '0.2em', 'label sits tight above the value')
     }
-    const cacheTile = grid.props.children[1]
-    const ring = cacheTile.props.children.filter((child) => child !== null && child !== undefined)[1]
-    equal(ring.props['data-dsh-token-hud'], 'ring', 'the ring is a direct child of the tile')
-    equal(ring.props.style.alignSelf, 'stretch', 'the ring stretches to the tile height')
+    const cacheRow = grid.props.children[1].props.children
+    const ring = cacheRow.props.children[1]
+    equal(ring.props['data-dsh-token-hud'], 'ring', 'the ring sits beside the text column')
+    equal(ring.props.style.width, '3.4em', 'the ring is a fixed square beside the text')
+    equal(ring.props.style.height, '3.4em', 'it matches the text column height without feeding back')
     const css = bundle.head.children[0].textContent
     const tile = css.slice(css.indexOf('[data-dsh-token-hud="tile"]{'))
     assert(tile.includes('background:var(--dsw-alias-bg-layer-1'), `solid raised fill, not a tint: ${tile}`)
@@ -421,7 +418,7 @@ export async function run(report) {
   suite.check('collapses into one summary line, keeping the totals in view', () => {
     const { element } = render({ collapsed: true })
     const card = findByMarker(element, 'card')
-    const details = card.props.children[2]
+    const details = card.props.children[1]
     equal(details.props['data-collapsed'], 'true', 'details marked collapsed')
     equal(details.props.style.gridTemplateRows, '0fr', 'the grid row animates shut')
     equal(details.props.style.opacity, 0, 'and fades out')
@@ -429,7 +426,6 @@ export async function run(report) {
     equal(details.props['aria-hidden'], 'true', 'and leaves the a11y tree')
 
     const text = textsOf(element).join(' | ')
-    assert(text.includes('· 已收纳'), `header tag: ${text}`)
     assert(text.includes('今日: '), `today label in the summary: ${text}`)
     assert(text.includes('4.51亿'), `today value in the summary: ${text}`)
     assert(text.includes('缓存率: '), `cache label in the summary: ${text}`)
@@ -441,46 +437,38 @@ export async function run(report) {
 
   suite.check('expands back to the trend line and the detail block', () => {
     const { element } = render()
-    const details = findByMarker(element, 'card').props.children[2]
+    const details = findByMarker(element, 'card').props.children[1]
     equal(details.props['data-collapsed'], 'false', 'details expanded')
     equal(details.props.style.gridTemplateRows, '1fr', 'row track open')
     equal(details.props.style.pointerEvents, undefined, 'interactive')
     equal(details.props['aria-hidden'], undefined, 'in the a11y tree')
     const text = textsOf(element).join(' | ')
-    assert(text.includes('· 已收纳') === false, `the tag drops when open: ${text}`)
     assert(text.includes('-56.2%'), `trend chip back: ${text}`)
     equal(findByMarker(element, 'summary'), null, 'no summary while expanded')
   })
 
-  suite.check('the card itself is the collapse control; no hint row remains', () => {
+  suite.check('the card itself is the only control; header and unit switch are gone', () => {
     const { element, bundle } = render()
-    // No icon anywhere in the header.
-    const header = findByMarker(element, 'card').props.children[0]
-    equal(header.props.children[1].type, 'button', 'the only header control is the unit switch')
-    equal(String(header.props.children[1].props.children), '单位：亿', 'and it renders text, not a glyph')
-    equal(bundle.head.children[0].textContent.includes('chevron'), false, 'no chevron rules left in the sheet')
-
+    equal(findByMarker(element, 'unit'), null, 'the unit switch is gone')
     equal(findByMarker(element, 'hint'), null, 'the hint button is gone')
     assert(typeof findByMarker(element, 'card').props.onClick === 'function', 'the card toggles')
-    equal(textsOf(element).join(' ').includes('轻点'), false, 'no hint strings remain')
+    const text = textsOf(element).join(' ')
+    assert(text.includes('单位') === false, `no unit label remains: ${text}`)
+    assert(text.includes('轻点') === false, `no hint strings remain: ${text}`)
+    const css = bundle.head.children[0].textContent
+    assert(css.includes('[data-dsh-token-hud="unit"]') === false, 'no unit rules left in the sheet')
   })
 
-  suite.check('remembers the collapse choice and swallows the nested clicks', () => {
+  suite.check('remembers the collapse choice in local storage', () => {
     const bundle = loadBundle({ stateQueue: [PAYLOAD] })
     const element = bundle.registrations[0].Component({ wide: true })
-    equal(bundle.react.states[2].value, false, 'starts expanded')
+    equal(bundle.react.states[1].value, false, 'starts expanded')
     findByMarker(element, 'card').props.onClick()
-    equal(bundle.react.states[2].value, true, 'the card collapsed it')
+    equal(bundle.react.states[1].value, true, 'the card collapsed it')
     equal(bundle.store.get('dsh-token-hud:collapsed'), '1', 'and remembered it')
-
-    // The nested control must not reach the card's collapse handler.
-    let stopped = 0
-    const event = { stopPropagation() { stopped += 1 } }
-    findByMarker(element, 'unit').props.onClick(event)
-    equal(stopped, 1, 'the unit switch swallows the click')
-    equal(bundle.react.states[1].value, 'million', 'the unit switch still switched')
-    equal(bundle.react.states[2].value, true, 'and the card stayed collapsed')
-    equal(bundle.store.get('dsh-token-hud:collapsed'), '1', 'and the choice is remembered')
+    findByMarker(element, 'card').props.onClick()
+    equal(bundle.react.states[1].value, false, 'and opens again')
+    equal(bundle.store.get('dsh-token-hud:collapsed'), '0', 'and remembered that too')
   })
 
   suite.check('removes its stylesheet on dispose', () => {
@@ -512,13 +500,11 @@ export async function run(report) {
     equal(element, null, 'disabled renders nothing')
   })
 
-  suite.check('formats the hero in 亿 by default and switches to 百万', () => {
+  suite.check('formats the hero on the pinned 亿 scale', () => {
     const yi = textsOf(render().element).join(' | ')
     assert(yi.includes('53.39'), `亿 value: ${yi}`)
     assert(yi.includes('亿'), `亿 unit: ${yi}`)
-    const million = textsOf(render({ unit: 'million' }).element).join(' | ')
-    assert(million.includes('5338.6'), `百万 value: ${million}`)
-    assert(million.includes('百万'), `百万 unit: ${million}`)
+    assert(yi.includes('5338.6') === false, `no million hero without a switch: ${yi}`)
   })
 
   suite.check('never reaches for a B or T unit', () => {
@@ -616,9 +602,9 @@ export async function run(report) {
     const { element } = render()
     const ring = findByMarker(element, 'ring')
     assert(ring !== null, 'ring rendered')
-    equal(ring.props.style.alignSelf, 'stretch', 'the ring stretches to the tile height')
-    equal(ring.props.style.width, 'auto', 'its width follows the square aspect')
-    equal(ring.props.style.aspectRatio, '1', 'it stays round')
+    equal(ring.props.style.width, '3.4em', 'fixed square width')
+    equal(ring.props.style.height, '3.4em', 'fixed square height')
+    equal(ring.props.style.flex, 'none', 'the ring cannot be squeezed')
     const fill = ring.props.children[1]
     const circumference = 2 * Math.PI * 18
     close(fill.props.strokeDashoffset, circumference * (1 - 0.986), 0.05, 'ring offset')
@@ -651,14 +637,6 @@ export async function run(report) {
     const { element } = render({ t: (key) => `«${key}»` })
     const text = textsOf(element).join(' | ')
     assert(text.includes('«totalUsage»'), `translator unused: ${text}`)
-  })
-
-  suite.check('the unit switch is interactive', () => {
-    const { element } = render()
-    const button = findByMarker(element, 'unit')
-    equal(button.type, 'button', 'button element')
-    assert(typeof button.props.onClick === 'function', 'click handler')
-    button.props.onClick({ stopPropagation() {} })
   })
 
   await suite.checkAsync('schedules a refresh with the configured interval', async () => {
