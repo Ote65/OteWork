@@ -93,24 +93,37 @@ window.__ModuleLoader__.load({
     }
 
     function selectPanel(panelId) {
-      var layout = currentCtx && currentCtx.layout
+      var layout = serviceOf(currentCtx, 'layout')
       if (layout == null || typeof layout.selectPanel !== 'function') return
       // 面板在 apply 里注册，切换时机早于注册会抛；这里只忽略这种时序噪声。
       try { layout.selectPanel(panelId) } catch (error) { void error }
     }
 
-    function sidebarRightOf(ctx) {
+    /**
+     * 读一个可能不存在的服务。Cordis 的 ctx 是 Proxy：对未注册/未注入的服务
+     * 名做裸属性访问会直接抛 `cannot get property "x" without inject`，
+     * 所以一律 ctx.get 优先、裸访问只作兜底并全程 try/catch。
+     */
+    function serviceOf(ctx, name) {
       if (ctx == null) return null
-      var sr = ctx.sidebarRight
-      if (sr != null) return sr
       try {
-        if (typeof ctx.get === 'function') sr = ctx.get('sidebarRight')
+        if (typeof ctx.get === 'function') {
+          var viaGet = ctx.get(name)
+          if (viaGet != null) return viaGet
+        }
       } catch (error) { void error }
-      return sr == null ? null : sr
+      try {
+        var direct = ctx[name]
+        return direct == null ? null : direct
+      } catch (error) { return null }
+    }
+
+    function sidebarRightOf(ctx) {
+      return serviceOf(ctx, 'sidebarRight')
     }
 
     function openSession(sessionId) {
-      var uiWorkspace = currentCtx && currentCtx.uiWorkspace
+      var uiWorkspace = serviceOf(currentCtx, 'uiWorkspace')
       if (uiWorkspace == null || typeof uiWorkspace.openSession !== 'function') return
       try { uiWorkspace.openSession(sessionId) } catch (error) { void error }
     }
@@ -132,7 +145,7 @@ window.__ModuleLoader__.load({
         selectPanel(PANEL_ID)
         return
       }
-      var layout = ctx.layout
+      var layout = serviceOf(ctx, 'layout')
       if (layout != null && typeof layout.openRightbar === 'function') {
         try { layout.openRightbar() } catch (error) { void error }
       }
@@ -626,7 +639,7 @@ window.__ModuleLoader__.load({
       var wid = ws.workspaceId
       if (creating.has(wid)) return
       creating.add(wid)
-      var ui = currentCtx != null ? currentCtx.uiWorkspace : null
+      var ui = serviceOf(currentCtx, 'uiWorkspace')
       if (ui == null || typeof ui.startSession !== 'function') {
         creating.delete(wid)
         return
@@ -1104,7 +1117,7 @@ window.__ModuleLoader__.load({
               'data-gov-node': 'add',
               title: '新建手下会话',
               onClick: function () {
-                var uiWorkspace = currentCtx && currentCtx.uiWorkspace
+                var uiWorkspace = serviceOf(currentCtx, 'uiWorkspace')
                 if (uiWorkspace != null && typeof uiWorkspace.startSession === 'function' && workspace != null) {
                   try { uiWorkspace.startSession(workspace.workspaceId) } catch (error) { void error }
                 }

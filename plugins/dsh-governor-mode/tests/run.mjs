@@ -505,7 +505,7 @@ function loadBundle(options = {}) {
   const openCalls = []
   const paneCalls = []
   const rightbarCalls = []
-  const ctx = {
+  const baseCtx = {
     effect(body) {
       const dispose = body()
       if (typeof dispose === 'function') disposers.push(dispose)
@@ -534,10 +534,24 @@ function loadBundle(options = {}) {
     },
   }
   if (options.paneRegister === true) {
-    ctx.sidebarRight = {
+    baseCtx.sidebarRight = {
       registerPane: (key, Component) => { paneCalls.push({ key, Component }); return () => {} },
     }
   }
+  // cordisProxy: wrap the context in a Proxy that mimics Cordis 4's context —
+  // a bare property read of a name that is neither on the context nor a known
+  // service THROWS (`cannot get property "x" without inject`), which is exactly
+  // the real-machine failure that once failed this plugin's activation.
+  const ctx = options.cordisProxy === true
+    ? new Proxy(baseCtx, {
+      get(target, prop, receiver) {
+        if (Reflect.has(target, prop)) return Reflect.get(target, prop, receiver)
+        if (prop === 'get') return (name) => (Reflect.has(target, name) ? Reflect.get(target, name) : undefined)
+        throw new Error(`cannot get property "${String(prop)}" without inject`)
+      },
+      has(target, prop) { return Reflect.has(target, prop) },
+    })
+    : baseCtx
   exported.apply(ctx)
 
   return {
@@ -624,6 +638,19 @@ async function runClient(reportFn) {
     assert(reg !== undefined, 'main registration present')
     equal(reg.registration.key, 'governor', 'main panel key')
     equal(bundle.attrs['data-dsh-governor-mount'], 'main', 'strategy recorded')
+  })
+
+  suite.check('apply survives a Cordis-style proxy ctx (bare unknown-service reads throw)', () => {
+    // 真机事故的离线复现：Cordis 4 的 ctx 是 Proxy，对未注册服务名的裸属性
+    // 访问抛 `cannot get property "x" without inject`。本插件曾在挂载期的
+    // sidebarRight 探测里裸访问而整条目激活失败——这里确保永不复发。
+    const bundle = loadBundle({ cordisProxy: true })
+    equal(bundle.internals.currentStrategy(), 'slot:sidebar.right.pane', 'activation completed, strategy chosen')
+    equal(bundle.disposers.length, 5, 'all five effects registered and disposed cleanly')
+    includes(bundle.injected.join(','), 'conversation.input.left', 'draft bridge still injected')
+    equal(bundle.attrs['data-dsh-governor-mode'], '', 'root marker set')
+    // 拦截器也照常装上（点工作区行依赖它）
+    equal(bundle.listeners.click.length, 1, 'interceptor installed')
   })
 
   suite.check('sidebar interceptor passes inline controls and captures workspace rows', () => {

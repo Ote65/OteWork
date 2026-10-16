@@ -713,6 +713,25 @@ function mountRoutes(ctx, webServer, config, connection) {
 }
 
 /**
+ * 读一个可能不存在的服务。Cordis 的 ctx 是 Proxy：对未注册/未注入的服务名做
+ * 裸属性访问会抛 `cannot get property "x" without inject`，所以一律 ctx.get
+ * 优先、裸访问只作兜底并全程 try/catch。
+ * @param ctx - Cordis 上下文。
+ * @param name - 服务名。
+ * @returns 服务对象，或 undefined。
+ */
+function serviceOf(ctx, name) {
+  if (ctx === undefined || ctx === null) return undefined
+  try {
+    if (typeof ctx.get === 'function') {
+      const viaGet = ctx.get(name)
+      if (viaGet !== undefined && viaGet !== null) return viaGet
+    }
+  } catch (error) { /* get 不可用时试属性 */ }
+  try { return ctx[name] } catch (error) { return undefined }
+}
+
+/**
  * 宿主插件体：webServer 载体就绪时挂载全部路由，否则保持惰性。
  * webServer 是 DSH web profile 的真实服务名（plus-menu 同款注入写法）；
  * connection 不是服务名，只作为可选载体防御式尝试，用来折凭据 URL。
@@ -725,9 +744,9 @@ export function apply(ctx, config = {}) {
   if (typeof ctx?.inject === 'function') {
     // 动态注入：没有 webServer 载体时回调不跑，路由一条都不注册。
     ctx.inject(['webServer'], (scope) => {
-      const webServer = scope?.webServer ?? (typeof scope?.get === 'function' ? scope.get('webServer') : undefined)
+      const webServer = serviceOf(scope, 'webServer')
       if (webServer === undefined || webServer === null) return
-      const connection = scope?.connection ?? (typeof scope?.get === 'function' ? scope.get('connection') : undefined)
+      const connection = serviceOf(scope, 'connection')
       const dispose = mountRoutes(scope, webServer, safeConfig, connection)
       if (typeof scope?.effect === 'function') {
         scope.effect(() => dispose, 'governor-mode: api routes')
@@ -735,9 +754,9 @@ export function apply(ctx, config = {}) {
     })
     return
   }
-  const webServer = ctx?.webServer ?? (typeof ctx?.get === 'function' ? ctx.get('webServer') : undefined)
+  const webServer = serviceOf(ctx, 'webServer')
   if (webServer === undefined || webServer === null) return
-  const connection = ctx?.connection ?? (typeof ctx?.get === 'function' ? ctx.get('connection') : undefined)
+  const connection = serviceOf(ctx, 'connection')
   const dispose = mountRoutes(ctx, webServer, safeConfig, connection)
   if (typeof ctx?.effect === 'function') {
     ctx.effect(() => dispose, 'governor-mode: api routes')
