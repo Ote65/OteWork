@@ -34,11 +34,25 @@ plugins/
 ├── dsh-element-picker/   预览内元素拾取
 ├── dsh-governor-mode/    总督模式（v2：右侧面板 + /api/governor 控制平面）
 └── dsh-picker-probe/     拾取器的诊断台
+tools/
+├── install.mjs           一键安装（随安装包下发，离线可用）
+└── package-plugins.mjs   打安装包：导已提交内容 + 安装脚本 → dist/*.zip
 ```
 
 每个插件目录都是一个可独立挂载的 DSH 插件包：`package.json` 声明包名，
 `cordis.patch.yml` 描述要插进 profile 的那一行，`lib/` 是实际运行的代码，
 `tests/` 是离线自测台。
+
+## 安装包
+
+```sh
+node tools/package-plugins.mjs   # → dist/OteWork-plugins-<提交>-<日期>.zip
+```
+
+包里是 `git archive` 导出的已提交内容（工作区未提交的改动不进包）+ `install.mjs`
++ 双击入口（`install.command` / `install.cmd`）+ `INSTALL.md`。安装脚本复制插件到
+`$DSH_HOME/local-plugins/`，补齐每个 profile 的 `dependencies` 与 `dsh.profile.bundles`，
+刷新 `node_modules` 链接——三处缺一插件不生效。可重复运行，覆盖旧版本。
 
 ## 安装
 
