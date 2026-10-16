@@ -368,30 +368,15 @@ window.__ModuleLoader__.load({
 			'  border-radius: 4px !important;',
 			'}',
 
-			/* ---- dsh-token-hud：毛玻璃 + 重阴影 + 2em 圆角 → 实色面板（§5.1 / §4.3） ---- */
-			'html[' + SKIN_ATTR + '] [data-dsh-token-hud="card"]{',
-			'  background: var(--dsw-alias-bg-layer-1) !important;',
-			'  border-color: rgba(255, 255, 255, 0.08) !important;',
-			'  border-radius: 6px !important;',
-			'  box-shadow: none !important;',
-			'  -webkit-backdrop-filter: none !important;',
-			'  backdrop-filter: none !important;',
-			'}',
-			/* 它把 Tailwind 500 写在 inline style 上：蓝、靛、玫红三种非语义色收成橙与语义红。
-			 * 同一条规则要同时匹配 hex 与 rgb 两种序列化形式（background 是 color-mix 字符串、
-			 * color 走 CSSOM 序列化成 rgb），所以两个选择器各写一份。 */
-			'html[' + SKIN_ATTR + '] [data-dsh-token-hud] [style*="#3b82f6"],',
-			'html[' + SKIN_ATTR + '] [data-dsh-token-hud] [style*="rgb(59, 130, 246)"]{',
-			'  color: var(--dsh-ote-accent) !important;',
-			'  background-color: rgba(255, 90, 31, 0.12) !important;',
-			'}',
-			'html[' + SKIN_ATTR + '] [data-dsh-token-hud] [style*="#6366f1"],',
-			'html[' + SKIN_ATTR + '] [data-dsh-token-hud] [style*="rgb(99, 102, 241)"]{',
-			'  color: var(--dsh-ote-accent) !important;',
-			'}',
-			'html[' + SKIN_ATTR + '] [data-dsh-token-hud] [style*="#f43f5e"],',
-			'html[' + SKIN_ATTR + '] [data-dsh-token-hud] [style*="rgb(244, 63, 94)"]{',
-			'  color: var(--dsw-alias-state-error-primary) !important;',
+			/* ---- dsh-token-hud：主人明令不套皮（2026-10-16）。 ----
+			 * 它只消费四个语义别名（其余全是自带颜色），把这四个在卡片自己的
+			 * 元素上钉回出厂值即可完全免疫 token 层——元素自身的声明永远赢过
+			 * 从 body 继承来的值，无需 !important。 */
+			'html[' + SKIN_ATTR + '] [data-dsh-token-hud]{',
+			'  --dsw-alias-bg-layer-1: #1c1c1e;',
+			'  --dsw-alias-label-primary: #e7ebf3;',
+			'  --dsw-alias-label-secondary: rgba(231, 235, 243, 0.72);',
+			'  --dsw-alias-label-tertiary: rgba(231, 235, 243, 0.46);',
 			'}',
 
 			/* ---- @linxin666/task-board：六组写死的标签色 → 橙色阶梯 + 一档中性 ---- */

@@ -223,8 +223,11 @@ export async function run(report) {
 
     includes(css, '[data-dsh-picker="box"]', 'element picker highlight box')
     includes(css, '[data-dsh-picker="add"]', 'element picker add button')
-    includes(css, '[data-dsh-token-hud="card"]', 'token hud card material')
-    includes(css, '[data-dsh-token-hud] [style*="#3b82f6"]', 'token hud blue')
+    /* 主人明令：token 计量卡片不套皮 —— 四个它消费的别名必须钉回出厂值。 */
+    includes(css, '[data-dsh-token-hud]{', 'token hud pinned')
+    includes(css, '--dsw-alias-bg-layer-1: #1c1c1e;', 'token hud pinned bg')
+    assert(css.includes('[data-dsh-token-hud="card"]') !== true, 'token hud card must not be restyled')
+    assert(css.includes('#3b82f6') !== true, 'token hud inline colors must not be touched')
     includes(css, '[data-tag-tone="0"]', 'task board tag tones')
     includes(css, '[data-tag-tone="5"]', 'task board last tone')
     includes(css, '--dsh-task-tag-fill', 'task board tag variables')
