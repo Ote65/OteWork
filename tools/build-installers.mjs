@@ -1,38 +1,49 @@
 #!/usr/bin/env node
 /**
- * 出正式安装包：macOS 的 .pkg（Apple 安装器界面）与 Windows 的 .exe（NSIS 向导界面）。
+ * 出正式安装包。
  *
- *   node tools/build-installers.mjs             两个平台都出
- *   node tools/build-installers.mjs --mac      只出 .pkg（需要 macOS）
- *   node tools/build-installers.mjs --win      只出 .exe
+ *   node tools/build-installers.mjs                      macOS 整机安装包（.pkg）：应用本体 + OteWork 插件
+ *   node tools/build-installers.mjs --app-path <路径>    指定应用本体来源
+ *   node tools/build-installers.mjs --plugins            只出插件包（macOS .pkg，几百 KB）
+ *   node tools/build-installers.mjs --win                出 Windows 插件包（NSIS .exe）
  *
- * 两个安装包的载荷同源：都从 tools/lib/stage.mjs 从 git 已提交内容导出（工作区未提交的
- * 改动不进包），装进 DSH 的动作都交给同一份 tools/install.mjs——三边行为一致。
+ * 整机包的载荷：/Applications/DeepSeek Harness.app（官方成品，签名与公证原样保留）
+ *              /usr/local/share/OteWork（OteWork 插件集 + 离线安装脚本）
+ * 应用来源优先级：--app-path → 本机 /Applications → 官方发布通道下载（进 ~/.ote-build/cache）。
  *
- * Windows 侧需要 makensis；macOS 上可从 electron-builder-binaries 取交叉编译器：
- *   https://github.com/electron-userland/electron-builder-binaries/releases (nsis-3.0.4.1.7z)
- * 解压后把目录给 NSISDIR，或用 OTE_MAKENSIS 指定 makensis 可执行文件。
+ * 组件包默认带 <relocate>（Installer 会去找同 bundle id 的旧拷贝装到那儿去），
+ * 整机包把它摘掉，保证一定落在 /Applications。
  */
 
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { REPO, VERSION, stageSource, writeInstallDoc } from './lib/stage.mjs'
 
 const argv = process.argv.slice(2)
-const only = argv.includes('--mac') ? 'mac' : argv.includes('--win') ? 'win' : null
-const wantMac = only !== 'win'
-const wantWin = only !== 'mac'
+
+function option(name) {
+  const index = argv.indexOf('--' + name)
+  return index === -1 ? null : argv[index + 1] ?? null
+}
+
+const mode = argv.includes('--win') ? 'win' : argv.includes('--plugins') ? 'plugins' : 'app'
+const wantMac = mode !== 'win'
+const wantWin = mode === 'win'
+const wantApp = mode === 'app'
+const appPath = option('app-path')
 
 const INSTALLER = join(REPO, 'tools', 'installer')
 const ASSETS = join(INSTALLER, 'branding', 'assets')
 const DIST = join(REPO, 'dist')
-const IDENTIFIER = 'com.otework.plugins'
+const IDENTIFIER = wantApp ? 'com.otework.app' : 'com.otework.plugins'
 const INSTALL_PATH = 'usr/local/share/OteWork'
 const SLUG = 'OteWork'
+const APP_BUNDLE = 'DeepSeek Harness.app'
+const APP_FEED = 'https://download.deepseek.com/dsh-desk/feeds/mac-arm64/nightly-mac.yml'
 
 function run(command, args, options = {}) {
   return execFileSync(command, args, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', ...options }).trim()
@@ -46,15 +57,18 @@ function escapeHtml(text) {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-/** mac 安装器的说明页是 HTML，插件表要出成行而不是 markdown。 */
+function plistString(info, key) {
+  return new RegExp(`<key>${key}</key>\\s*<string>([^<]+)</string>`).exec(info)?.[1]
+}
+
+/** 安装器说明页是 HTML，插件表要出成行而不是 markdown（表头写在模板里）。 */
 function pluginRowsHtml(plugins) {
-  const rows = ['<tr><th>插件</th><th>版本</th><th>作用</th></tr>']
-  for (const plugin of plugins) {
-    rows.push(
-      `<tr><td class="name">${escapeHtml(plugin.name)}</td><td>${escapeHtml(plugin.version)}</td><td>${escapeHtml(plugin.description)}</td></tr>`,
+  return plugins
+    .map(
+      (plugin) =>
+        `<tr><td class="name">${escapeHtml(plugin.name)}</td><td>${escapeHtml(plugin.version)}</td><td>${escapeHtml(plugin.description)}</td></tr>`,
     )
-  }
-  return rows.join('\n')
+    .join('\n')
 }
 
 function requireAsset(name) {
@@ -70,6 +84,49 @@ function fail(message) {
   process.exit(1)
 }
 
+/** 应用本体来源：命令行覆盖 → 本机 /Applications → 官方发布通道（下载后进缓存）。 */
+async function resolveApp() {
+  for (const candidate of [appPath, join('/Applications', APP_BUNDLE)]) {
+    if (candidate != null && existsSync(join(candidate, 'Contents', 'Info.plist'))) return candidate
+  }
+
+  console.log('  本机没有应用本体，改从官方发布通道取')
+  const feed = await (await fetch(APP_FEED)).text()
+  const url = (feed.match(/https:\/\/\S+\.zip/) ?? [])[0]
+  if (url === undefined) fail('读不到官方 mac 发布清单 ' + APP_FEED)
+
+  const cache = join(homedir(), '.ote-build', 'cache')
+  mkdirSync(cache, { recursive: true })
+  const zip = join(cache, url.split('/').pop())
+  if (existsSync(zip) === false) {
+    console.log('  下载 ' + url)
+    const response = await fetch(url)
+    if (response.ok === false) fail(`下载应用本体失败：HTTP ${response.status}`)
+    writeFileSync(zip, Buffer.from(await response.arrayBuffer()))
+  }
+  const unpacked = join(cache, 'app')
+  rmSync(unpacked, { recursive: true, force: true })
+  mkdirSync(unpacked, { recursive: true })
+  run('ditto', ['-x', '-k', zip, unpacked])
+  return join(unpacked, APP_BUNDLE)
+}
+
+/** 摘掉组件包的 <relocate>：让 Installer 一定装进载荷里那个路径。 */
+function stripRelocate(raw, work, target) {
+  const dir = join(work, 'relocate')
+  rmSync(dir, { recursive: true, force: true })
+  run('pkgutil', ['--expand', raw, dir])
+  const info = join(dir, 'PackageInfo')
+  const text = readFileSync(info, 'utf8')
+  if (text.includes('<relocate>') === false) {
+    renameSync(raw, target)
+    return false
+  }
+  writeFileSync(info, text.replace(/\s*<relocate>[\s\S]*?<\/relocate>/, ''))
+  run('pkgutil', ['--flatten', dir, target])
+  return true
+}
+
 const work = mkdtempSync(join(tmpdir(), 'ote-installer-'))
 mkdirSync(DIST, { recursive: true })
 
@@ -78,7 +135,7 @@ const meta = stageSource(stage)
 writeInstallDoc(stage, meta)
 
 console.log(`\nOteWork ${VERSION}   来源 ${meta.branch}@${meta.sha}${meta.dirty ? '（工作区另有未提交改动，未进包）' : ''}`)
-console.log(`载荷 ${meta.plugins.length} 个插件`)
+console.log(`载荷 ${meta.plugins.length} 个插件${wantApp ? ' + 应用本体' : '（不含应用本体）'}`)
 
 const out = []
 
@@ -89,6 +146,19 @@ if (wantMac) {
   const root = join(work, 'mac-root')
   cpSync(stage, join(root, INSTALL_PATH), { recursive: true })
 
+  let appVersion = ''
+  if (wantApp) {
+    const source = await resolveApp()
+    const info = readFileSync(join(source, 'Contents', 'Info.plist'), 'utf8')
+    const executable = plistString(info, 'CFBundleExecutable')
+    const archs = executable === undefined ? '' : run('lipo', ['-archs', join(source, 'Contents', 'MacOS', executable)])
+    appVersion = `${plistString(info, 'CFBundleShortVersionString') ?? '?'} ${archs}`.trim()
+    console.log(`  应用本体 ${source}  ${appVersion}`)
+    mkdirSync(join(root, 'Applications'), { recursive: true })
+    /* ditto 原样搬运：符号链接、扩展属性、权限、签名密封都不动 */
+    run('ditto', [source, join(root, 'Applications', APP_BUNDLE)])
+  }
+
   const scripts = join(work, 'mac-scripts')
   mkdirSync(scripts, { recursive: true })
   cpSync(join(INSTALLER, 'mac', 'scripts', 'postinstall'), join(scripts, 'postinstall'))
@@ -98,24 +168,33 @@ if (wantMac) {
   const resources = join(work, 'mac-resources')
   mkdirSync(resources, { recursive: true })
   cpSync(requireAsset('pkg-background.png'), join(resources, 'background.png'))
-  cpSync(join(INSTALLER, 'mac', 'resources', 'welcome.html'), join(resources, 'welcome.html'))
   cpSync(join(stage, 'LICENSE'), join(resources, 'license.txt'))
-  writeFileSync(
-    join(resources, 'readme.html'),
-    readFileSync(join(INSTALLER, 'mac', 'resources', 'readme.html'), 'utf8')
-      .replace('<!--PLUGINS-->', pluginRowsHtml(meta.plugins)),
-  )
+  const fill = (file) =>
+    readFileSync(join(INSTALLER, 'mac', 'resources', file), 'utf8')
+      .replaceAll('<!--APPVERSION-->', escapeHtml(appVersion))
+      .replace('<!--APPROW-->', wantApp
+        ? `<tr><td class="name">DeepSeek Harness 应用本体</td><td>${escapeHtml(appVersion)}</td><td>装到 /Applications，官方签名与公证原样不变</td></tr>`
+        : '')
+      .replace('<!--PLUGINS-->', pluginRowsHtml(meta.plugins))
+  writeFileSync(join(resources, 'welcome.html'), fill('welcome.html'))
+  writeFileSync(join(resources, 'readme.html'), fill('readme.html'))
 
-  const component = join(work, 'pkgs', `${SLUG}-${VERSION}.pkg`)
-  mkdirSync(join(work, 'pkgs'), { recursive: true })
+  const rawComponent = join(work, 'component.pkg')
   run('pkgbuild', [
     '--root', root,
     '--identifier', IDENTIFIER,
     '--version', VERSION,
     '--scripts', scripts,
     '--install-location', '/',
-    component,
+    rawComponent,
   ])
+
+  const componentName = `${SLUG}-${VERSION}.pkg`
+  const packagePath = join(work, 'pkgs')
+  mkdirSync(packagePath, { recursive: true })
+  const component = join(packagePath, componentName)
+  const stripped = stripRelocate(rawComponent, work, component)
+  console.log(`  组件包 ${stripped ? '已摘掉 relocation' : '无需改'}`)
 
   const distribution = join(work, 'distribution.xml')
   writeFileSync(
@@ -123,16 +202,17 @@ if (wantMac) {
     readFileSync(join(INSTALLER, 'mac', 'distribution.xml'), 'utf8')
       .replaceAll('@@TITLE@@', `${SLUG} ${VERSION}`)
       .replaceAll('@@VERSION@@', VERSION)
-      .replaceAll('@@COMPONENT@@', `${SLUG}-${VERSION}.pkg`)
+      .replaceAll('@@COMPONENT@@', componentName)
       .replaceAll('@@IDENTIFIER@@', IDENTIFIER),
   )
 
-  const pkg = join(DIST, `${SLUG}-${VERSION}-macOS.pkg`)
+  const suffix = wantApp ? '-macOS' : '-macOS-plugins'
+  const pkg = join(DIST, `${SLUG}-${VERSION}${suffix}.pkg`)
   rmSync(pkg, { force: true })
   run('productbuild', [
     '--distribution', distribution,
     '--resources', resources,
-    '--package-path', join(work, 'pkgs'),
+    '--package-path', packagePath,
     pkg,
   ])
   out.push(pkg)
@@ -140,6 +220,8 @@ if (wantMac) {
 
 /* ---------- Windows：makensis ---------- */
 if (wantWin) {
+  if (wantApp) fail('整机安装包的 Windows 版还没做，本轮只出 macOS')
+
   const makensis = process.env.OTE_MAKENSIS ?? 'makensis'
   const nsisDir = process.env.NSISDIR
 
@@ -178,4 +260,5 @@ for (const file of out) {
   console.log(`\n已生成  ${file}`)
   console.log(`        ${(size / 1024 / 1024).toFixed(1)} MB   sha256 ${sha256(file).slice(0, 16)}…`)
 }
-console.log('\n两个安装包都未做代码签名：macOS 首次打开会被 Gatekeeper 拦（右键「打开」），Windows 会弹 SmartScreen（「更多信息」→「仍要运行」）。')
+console.log(`\n安装包本身没做代码签名：双击会被 Gatekeeper 拦一次（右键「打开」即可）。${
+  wantApp ? '装进去的应用本体保持官方签名与公证，装完首次打开不会被拦。' : ''}`)

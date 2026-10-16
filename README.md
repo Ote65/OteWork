@@ -56,18 +56,23 @@ tools/
 正式发布用平台原生安装器，双击即装、带安装界面：
 
 ```sh
-node tools/build-installers.mjs          # → dist/OteWork-1.0.0-macOS.pkg + dist/OteWork-Setup-1.0.0.exe
-node tools/build-installers.mjs --mac    # 只出 .pkg
-node tools/build-installers.mjs --win    # 只出 .exe
+node tools/build-installers.mjs             # → dist/OteWork-1.0.0-macOS.pkg（整机：应用本体 + 插件）
+node tools/build-installers.mjs --plugins   # → dist/OteWork-1.0.0-macOS-plugins.pkg（只含插件）
+node tools/build-installers.mjs --win       # → dist/OteWork-Setup-1.0.0.exe（插件，Windows）
 ```
 
-- **macOS `.pkg`**：Apple 安装器界面（品牌背景 + 欢迎页 + 许可条款 + 说明页 + 进度动画），
-  装到 `/usr/local/share/OteWork`，收尾脚本以当前登录用户的身份把插件写进 DSH profile。
+- **macOS `.pkg`（整机）**：Apple 安装器界面（品牌背景 + 欢迎页 + 许可条款 + 说明页 + 进度动画），
+  一次装两样：`/Applications/DeepSeek Harness.app`（官方成品，签名与公证原样保留）+ 
+  `/usr/local/share/OteWork`（OteWork 插件集）。收尾脚本以当前登录用户的身份把插件写进 DSH profile；
+  全新机器上它还顺手立好 desktop profile 骨架，插件第一次打开应用就位，用户不必进终端。
+  应用来源：`--app-path` → 本机 `/Applications` → 官方发布通道下载（进 `~/.ote-build/cache`）。
 - **Windows `.exe`**：NSIS 向导（开场闪屏 + 逐帧横幅动画 + 欢迎 / 许可 / 目录 / 进度 / 完成五页），
   装到 `%LOCALAPPDATA%\OteWork`，不申请管理员，安装过程中调用随包 `install.mjs` 写 DSH profile。
+  整机版留待后续。
 
-两个安装包的载荷同源（`tools/lib/stage.mjs` 从 git 已提交内容导出），装进 DSH 的动作都交给同一份
-`tools/install.mjs`，卸载也走同一份（`--uninstall`）。版本号在 `tools/lib/stage.mjs` 的 `VERSION` 里，改一处两个包同时变。
+组件包的载荷同源（`tools/lib/stage.mjs` 从 git 已提交内容导出），装进 DSH 的动作都交给同一份
+`tools/install.mjs`（`--seed-desktop` 立 profile 骨架，`--uninstall` 还原），卸载也走同一份。
+版本号在 `tools/lib/stage.mjs` 的 `VERSION` 里，改一处所有包同时变。
 
 Windows 侧需要 `makensis`。macOS 上打 Windows 包可下载 [electron-builder-binaries](https://github.com/electron-userland/electron-builder-binaries/releases)
 的 `nsis-3.0.4.1.7z`，解压后指定路径：
@@ -90,8 +95,9 @@ node tools/package-plugins.mjs   # → dist/OteWork-plugins-<提交>-<日期>.zi
 `$DSH_HOME/local-plugins/`，补齐每个 profile 的 `dependencies` 与 `dsh.profile.bundles`，
 刷新 `node_modules` 链接——三处缺一插件不生效。可重复运行，覆盖旧版本。
 
-> 两个安装包都**未做代码签名**：macOS 首次打开会被 Gatekeeper 拦一次（右键 →「打开」），
-> Windows 会弹 SmartScreen（「更多信息」→「仍要运行」）。
+> 安装包本身**未做代码签名**：macOS 首次双击会被 Gatekeeper 拦一次（右键 →「打开」），
+> Windows 会弹 SmartScreen（「更多信息」→「仍要运行」）。整机包里那份应用本体**是官方签名 + 公证的**，
+> 装完首次打开不会被拦。
 
 ## 安装
 

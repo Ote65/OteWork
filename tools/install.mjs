@@ -8,6 +8,7 @@
  *
  *   node install.mjs                 装进探到的所有 profile
  *   node install.mjs --profile web   只装 web
+ *   node install.mjs --seed-desktop  应用还没启动过时（没有 desktop profile）先立好骨架
  *   node install.mjs --dry-run       只报告将要做什么
  *   node install.mjs --uninstall     反向操作：摘掉依赖 / bundle / 链接，删掉插件本体
  *   node install.mjs --root <目录>   插件来自指定目录（默认脚本所在目录，仓库内调试用）
@@ -29,6 +30,7 @@ function option(name) {
 
 const dryRun = argv.includes('--dry-run')
 const uninstall = argv.includes('--uninstall')
+const seedDesktop = argv.includes('--seed-desktop')
 const onlyProfile = option('profile')
 const here = resolve(option('root') ?? dirname(fileURLToPath(import.meta.url)))
 const dshHome = process.env.DSH_HOME ? resolve(process.env.DSH_HOME) : join(homedir(), '.dsh')
@@ -80,12 +82,36 @@ function readProfiles() {
     .map((name) => ({ name, file: join(root, name, 'package.json') }))
 }
 
+const localPlugins = join(dshHome, 'local-plugins')
+const report = []
+
+/**
+ * 应用独占的 desktop profile 是应用自己建的（dsh CLI 不给它初始化）。全新机器上它还不存在，
+ * 这里照应用自己的 initProfile 形状先立骨架：应用首次启动只补缺、绝不覆盖已有文件，
+ * 所以插件第一次打开应用就位，用户不必再进终端。
+ */
+function seedDesktopProfile() {
+  const dir = join(dshHome, 'profiles', 'desktop')
+  if (existsSync(join(dir, 'package.json'))) return
+  if (dryRun) {
+    report.push('  · 会新建 desktop profile 骨架（应用还没启动过）')
+    return
+  }
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name: 'dsh-profile-desktop',
+    private: true,
+    dependencies: {},
+    dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] } },
+  }, null, 2) + '\n')
+  report.push('  · 新建 desktop profile 骨架（应用还没启动过，首次启动即带插件）')
+}
+
+if (seedDesktop) seedDesktopProfile()
+
 const plugins = readPlugins()
 const profiles = readProfiles()
 if (profiles.length === 0) fail(onlyProfile == null ? '没有找到任何 profile' : '没有名为 ' + onlyProfile + ' 的 profile')
-
-const localPlugins = join(dshHome, 'local-plugins')
-const report = []
 
 if (uninstall) {
   /* ---- 卸载：逐个 profile 摘掉依赖 / bundle 顺序 / node_modules 链接 ---- */
