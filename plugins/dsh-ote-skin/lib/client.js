@@ -357,6 +357,24 @@ window.__ModuleLoader__.load({
 			'  background: transparent;',
 			'}',
 
+			/* 侧栏收起/展开滑移 —— 主人钦定（2026-10-16）：左移右移、非线性。
+			 * 宿主只在 data-animating 期间给 grid 列宽挂 .3s 过渡，且被
+			 * prefers-reduced-motion 整个掐掉。这里用更高优先级换成更慢、
+			 * 收尾更强的 expo 缓动，并给侧栏列本身加 translateX 滑移，
+			 * 让内容是真正向左滑出/向右滑入，而不是被列宽剪掉。 */
+			'html[' + SKIN_ATTR + '] [class*="_frame"][data-animating]{',
+			'  transition: grid-template-columns 0.42s cubic-bezier(0.16, 1, 0.3, 1);',
+			'}',
+			'html[' + SKIN_ATTR + '] [class*="_frame"][data-animating] [class*="_handle"]{',
+			'  transition: left 0.42s cubic-bezier(0.16, 1, 0.3, 1);',
+			'}',
+			'html[' + SKIN_ATTR + '] [class*="_sidebarCol"]{',
+			'  transition: transform 0.42s cubic-bezier(0.16, 1, 0.3, 1);',
+			'}',
+			'html[' + SKIN_ATTR + '] [class*="_frame"][data-sidebar-collapsed] [class*="_sidebarCol"]{',
+			'  transform: translateX(-100%);',
+			'}',
+
 			/* §6.4 选中态左缘橙条：2px 锐利主条 + 内渗柔光做层次；inset 阴影不动盒模型。
 			 * 行自带 5px 圆角会把橙条夹圆，所以把左缘两角钉直，右角保持原样。 */
 			'html[' + SKIN_ATTR + '] [class*="_sessionRow"][class*="_selected"],',

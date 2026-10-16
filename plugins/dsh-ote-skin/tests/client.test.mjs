@@ -228,6 +228,11 @@ export async function run(report) {
     includes(css, 'text-overflow: ellipsis', 'ellipsis is armed')
     includes(css, 'li::marker', 'list marker colour')
     includes(css, '[class*="_sidebarCol"] [class*="_fade"]', 'sidebar list fade killed')
+    includes(css, '[class*="_frame"][data-animating]', 'collapse transition is overridden')
+    includes(css, 'transition: grid-template-columns 0.42s cubic-bezier(0.16, 1, 0.3, 1);', 'column width eases with a strong expo curve')
+    includes(css, 'transition: transform 0.42s cubic-bezier(0.16, 1, 0.3, 1);', 'the sidebar column itself slides')
+    includes(css, '[class*="_frame"][data-sidebar-collapsed] [class*="_sidebarCol"]', 'collapsed state slides the column out')
+    includes(css, 'transform: translateX(-100%);', 'the slide is a real left-right move')
     includes(css, '[data-composer-card="true"]', 'composer card fill rule')
     includes(css, 'background-color: #212121;', 'composer card fill is the owner colour')
     includes(css, '[class*="_sidebarCol"] > div > [class*="_root"]', 'sidebar root rule')
@@ -337,7 +342,6 @@ export async function run(report) {
       'display:',
       'position:',
       'flex:',
-      'grid-',
     ]
     for (const id of [STYLE_ID, PLUGIN_STYLE_ID]) {
       const css = sheetById(bundle, id).replace(/\s+/g, '')
@@ -354,6 +358,10 @@ export async function run(report) {
       for (const value of minWidths) {
         assert(value === '0', `${id}: min-width must only relax an intrinsic minimum, got ${value}`)
       }
+      /* `grid-*` is banned as a *declaration*, not as a value: the skin may
+       * name the host's own `grid-template-columns` inside a `transition`
+       * (it only changes timing, never the layout value itself). */
+      assert(/(^|[;{])grid-[a-z-]+:/.test(probe) !== true, `${id}: grid property in the skin`)
     }
   })
 
