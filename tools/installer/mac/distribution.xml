@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  mac 安装器的界面定义。由 tools/build-installers.mjs 传给 productbuild，
+  下面这些占位符在构建时被替换：@@TITLE@@ @@VERSION@@ @@COMPONENT@@ @@IDENTIFIER@@
+-->
+<installer-gui-script minSpecVersion="2">
+    <title>OteWork @@VERSION@@</title>
+    <organization>com.otework</organization>
+    <domains enable_localSystem="true" enable_anywhere="false" enable_currentUserHome="false" />
+    <options customize="never" require-scripts="false" rootVolumeOnly="false" />
+
+    <background file="background.png" alignment="bottomleft" scaling="proportional" mime-type="image/png" />
+    <background-darkAqua file="background.png" alignment="bottomleft" scaling="proportional" mime-type="image/png" />
+
+    <welcome file="welcome.html" mime-type="text/html" />
+    <readme file="readme.html" mime-type="text/html" />
+    <license file="license.txt" mime-type="text/plain" />
+
+    <choices-outline>
+        <line choice="default">
+            <line choice="@@IDENTIFIER@@" />
+        </line>
+    </choices-outline>
+    <choice id="default" />
+    <choice id="@@IDENTIFIER@@" visible="false">
+        <pkg-ref id="@@IDENTIFIER@@" />
+    </choice>
+
+    <pkg-ref id="@@IDENTIFIER@@" version="@@VERSION@@" onConclusion="none">@@COMPONENT@@</pkg-ref>
+</installer-gui-script>

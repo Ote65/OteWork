@@ -9,11 +9,12 @@
  *   node install.mjs                 装进探到的所有 profile
  *   node install.mjs --profile web   只装 web
  *   node install.mjs --dry-run       只报告将要做什么
+ *   node install.mjs --uninstall     反向操作：摘掉依赖 / bundle / 链接，删掉插件本体
  *   node install.mjs --root <目录>   插件来自指定目录（默认脚本所在目录，仓库内调试用）
  */
 
 import {
-  cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync,
+  cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -27,6 +28,7 @@ function option(name) {
 }
 
 const dryRun = argv.includes('--dry-run')
+const uninstall = argv.includes('--uninstall')
 const onlyProfile = option('profile')
 const here = resolve(option('root') ?? dirname(fileURLToPath(import.meta.url)))
 const dshHome = process.env.DSH_HOME ? resolve(process.env.DSH_HOME) : join(homedir(), '.dsh')
@@ -84,6 +86,44 @@ if (profiles.length === 0) fail(onlyProfile == null ? '没有找到任何 profil
 
 const localPlugins = join(dshHome, 'local-plugins')
 const report = []
+
+if (uninstall) {
+  /* ---- 卸载：逐个 profile 摘掉依赖 / bundle 顺序 / node_modules 链接 ---- */
+  for (const profile of profiles) {
+    const pkg = readJson(profile.file)
+    const modules = join(dirname(profile.file), 'node_modules')
+    const dropped = []
+    for (const plugin of plugins) {
+      if (pkg.dependencies != null && plugin.name in pkg.dependencies) {
+        delete pkg.dependencies[plugin.name]
+        dropped.push(plugin.name)
+      }
+      if (Array.isArray(pkg.dsh?.profile?.bundles)) {
+        pkg.dsh.profile.bundles = pkg.dsh.profile.bundles.filter((name) => name !== plugin.name)
+      }
+      if (dryRun) continue
+      const entry = join(modules, plugin.name)
+      if (isLink(entry)) unlinkSync(entry)
+      else if (existsSync(entry)) report.push('  · ' + profile.name + ' 的 node_modules/' + plugin.name + ' 是实体目录，未删（请自行确认它是不是旧拷贝）')
+    }
+    if (dryRun === false && dropped.length > 0) writeFileSync(profile.file, JSON.stringify(pkg, null, 2) + '\n')
+    report.push('  · ' + profile.name + '：' + (dropped.length === 0 ? '本来就没有这些依赖' : '摘掉 ' + dropped.join('、')))
+  }
+
+  /* ---- 删掉插件本体 ---- */
+  for (const plugin of plugins) {
+    if (dryRun) continue
+    const target = join(localPlugins, plugin.name)
+    if (existsSync(target) || isLink(target)) rmSync(target, { recursive: true, force: true })
+  }
+
+  console.log('\nOteWork 插件' + (dryRun ? '（演练，未改动任何文件）' : '已卸载'))
+  console.log('  插件目录：' + localPlugins)
+  console.log('  已处理 profile：')
+  for (const line of report) console.log(line)
+  console.log('\nDSH 的资料目录里可能还留着旧配置的痕迹，完全重启 DeepSeek Harness 后官方外观即恢复。')
+  process.exit(0)
+}
 
 /* ---- 一、把插件本体放到 local-plugins（可重复运行，覆盖旧版本） ---- */
 for (const plugin of plugins) {

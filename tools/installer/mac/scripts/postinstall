@@ -1,0 +1,56 @@
+#!/bin/sh
+# OteWork 安装器的收尾步骤：插件文件已由 pkg 落到 /usr/local/share/OteWork，
+# 这里以当前登录用户的身份跑随包 install.mjs，把插件写进 DSH 的 profile。
+#
+# pkg 的 postinstall 以 root 运行，$HOME 是 /var/root，所以必须显式找出登录用户。
+
+set -u
+
+PAYLOAD="/usr/local/share/OteWork"
+TAG="[OteWork]"
+
+CONSOLE_USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "")
+case "${CONSOLE_USER}" in
+  ""|root|loginwindow)
+    echo "${TAG} 现在没有登录用户，跳过配置写入。登录后在终端运行：node ${PAYLOAD}/install.mjs --root ${PAYLOAD}"
+    exit 0
+    ;;
+esac
+
+USER_HOME=$(dscl . -read "/Users/${CONSOLE_USER}" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+if [ -z "${USER_HOME}" ] || [ ! -d "${USER_HOME}" ]; then
+  echo "${TAG} 读不到 ${CONSOLE_USER} 的主目录，无法写入配置"
+  exit 1
+fi
+
+if [ ! -d "${USER_HOME}/.dsh/profiles" ]; then
+  echo "${TAG} 没找到 ${USER_HOME}/.dsh/profiles。DeepSeek Harness 还没有启动过，"
+  echo "${TAG} 请先启动一次它建出 profile，再重跑：node ${PAYLOAD}/install.mjs --root ${PAYLOAD}"
+  exit 1
+fi
+
+NODE=""
+for candidate in /usr/local/bin/node /opt/homebrew/bin/node /usr/bin/node; do
+  if [ -x "${candidate}" ]; then NODE="${candidate}"; break; fi
+done
+if [ -z "${NODE}" ]; then
+  NODE=$(su -l "${CONSOLE_USER}" -c 'command -v node' 2>/dev/null || true)
+fi
+
+chmod -R a+rX "${PAYLOAD}"
+
+if [ -z "${NODE}" ]; then
+  echo "${TAG} 没找到 Node.js。插件文件已装好，装好 Node.js 后在终端运行："
+  echo "${TAG}   node ${PAYLOAD}/install.mjs --root ${PAYLOAD}"
+  exit 0
+fi
+
+echo "${TAG} 用 ${NODE} 写入 ${CONSOLE_USER} 的 DSH 配置"
+if su -l "${CONSOLE_USER}" -c "DSH_HOME='${USER_HOME}/.dsh' '${NODE}' '${PAYLOAD}/install.mjs' --root '${PAYLOAD}'"; then
+  echo "${TAG} 配置写入完成，完全重启 DeepSeek Harness 后生效"
+else
+  echo "${TAG} 配置写入失败。登录 ${CONSOLE_USER} 后在终端重跑："
+  echo "${TAG}   node ${PAYLOAD}/install.mjs --root ${PAYLOAD}"
+  exit 1
+fi
+exit 0
