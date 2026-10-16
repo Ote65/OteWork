@@ -448,8 +448,81 @@ function makeReact() {
   }
 }
 
+/** 极小假 DOM 元素：行装饰与像素头像用到的 DOM 面（属性 / 子节点 / querySelector）。 */
+function fakeEl(tag) {
+  return {
+    nodeType: 1,
+    tagName: tag,
+    id: '',
+    textContent: '',
+    dataset: {},
+    attrs: {},
+    children: [],
+    parentNode: null,
+    firstElementChild: null,
+    setAttribute(name, value) { this.attrs[name] = String(value) },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null
+    },
+    appendChild(node) {
+      node.parentNode = this
+      this.children.push(node)
+      if (this.firstElementChild == null && node.nodeType === 1) this.firstElementChild = node
+      return node
+    },
+    replaceChild(next, old) {
+      const index = this.children.indexOf(old)
+      if (index >= 0) this.children[index] = next
+      next.parentNode = this
+      old.parentNode = null
+      this.firstElementChild = this.children.find((node) => node.nodeType === 1) ?? null
+      return old
+    },
+    removeChild(node) {
+      const index = this.children.indexOf(node)
+      if (index >= 0) this.children.splice(index, 1)
+      node.parentNode = null
+      return node
+    },
+    querySelector(selector) { return queryIn(this, selector)[0] ?? null },
+    querySelectorAll(selector) { return queryIn(this, selector) },
+  }
+}
+
+/** 深度匹配子元素：'.cls' 走 class、'[attr]' / '[attr^="v"]' 走属性、其余按标签名。 */
+function queryIn(root, selector) {
+  const out = []
+  const attrBody = /^\[([^\]]+)\]$/.exec(selector)?.[1] ?? null
+  const wantClass = attrBody == null && selector.startsWith('.')
+  const want = wantClass ? selector.slice(1) : selector
+  const attrHit = attrBody == null ? null : makeAttrHit(attrBody)
+  for (const child of root.children) {
+    if (child.nodeType !== 1) continue
+    const hit = attrHit != null
+      ? attrHit(child)
+      : wantClass
+        ? String(child.attrs.class ?? '').split(/\s+/).includes(want)
+        : child.tagName === want
+    if (hit) out.push(child)
+    out.push(...queryIn(child, selector))
+  }
+  return out
+}
+
+/** '[data-x]' 命中存在；'[data-x^="前缀"]' 命中前缀。 */
+function makeAttrHit(body) {
+  const prefixAt = body.indexOf('^=')
+  if (prefixAt < 0) return (el) => el.getAttribute(body) != null
+  const name = body.slice(0, prefixAt)
+  const value = body.slice(prefixAt + 2).replace(/^["']|["']$/g, '')
+  return (el) => {
+    const actual = el.getAttribute(name)
+    return actual != null && actual.startsWith(value)
+  }
+}
+
 /**
- * 加载浏览器 bundle：可配置 fetch stub、ctx 形状、sidebarRight。
+ * 加载浏览器 bundle：可配置 fetch stub、ctx 形状。
  * 每次调用都重新执行源码，模块级状态天然隔离。
  */
 function loadBundle(options = {}) {
@@ -474,7 +547,8 @@ function loadBundle(options = {}) {
       removeAttribute(name) { delete attrs[name] },
     },
     head,
-    createElement() { return { id: '', textContent: '', dataset: {}, parentNode: null } },
+    createElement(tag) { return fakeEl(tag) },
+    createElementNS(namespace, tag) { return fakeEl(tag) },
     getElementById(id) { return head.children.find((node) => node.id === id) ?? null },
     addEventListener(type, handler) { (listeners[type] ??= []).push(handler) },
     removeEventListener(type, handler) {
@@ -503,8 +577,6 @@ function loadBundle(options = {}) {
   const disposers = []
   const startCalls = []
   const openCalls = []
-  const paneCalls = []
-  const rightbarCalls = []
   const createCalls = []
   const baseCtx = {
     effect(body) {
@@ -525,10 +597,6 @@ function loadBundle(options = {}) {
         return () => {}
       },
     },
-    layout: {
-      selectPanel: (id) => { /* 记录由用例自行断言，不抛错 */ },
-      openRightbar: () => { rightbarCalls.push(Date.now()) },
-    },
     uiWorkspace: {
       startSession: (wid) => { startCalls.push(wid) },
       openSession: (id) => { openCalls.push(id) },
@@ -540,11 +608,6 @@ function loadBundle(options = {}) {
         return Promise.resolve({ workspaceId: options.newWorkspaceId ?? 'w-new-panel' })
       },
     },
-  }
-  if (options.paneRegister === true) {
-    baseCtx.sidebarRight = {
-      registerPane: (key, Component) => { paneCalls.push({ key, Component }); return () => {} },
-    }
   }
   // cordisProxy: wrap the context in a Proxy that mimics Cordis 4's context —
   // a bare property read of a name that is neither on the context nor a known
@@ -564,7 +627,7 @@ function loadBundle(options = {}) {
 
   return {
     spec, exported, react, attrs, listeners, head, disposers,
-    injected, registrations, startCalls, openCalls, paneCalls, rightbarCalls, createCalls, ctx,
+    injected, registrations, startCalls, openCalls, createCalls, ctx,
     internals: exported.__internals,
   }
 }
@@ -622,30 +685,60 @@ async function runClient(reportFn) {
     equal(source.includes('conversation.header.leading'), false, 'header slot is gone')
   })
 
-  suite.check('mount strategy one: sidebarRight pane registration wins', () => {
-    const bundle = loadBundle({ paneRegister: true })
-    equal(bundle.internals.currentStrategy(), 'pane', 'strategy')
-    equal(bundle.paneCalls.length, 1, 'registered once')
-    equal(bundle.paneCalls[0].key, 'governor', 'pane key')
-    equal(bundle.attrs['data-dsh-governor-mount'], 'pane', 'strategy recorded on the root')
-  })
-
-  suite.check('mount strategy two: right content slot shadowing when no pane api', () => {
+  suite.check('the drawer mounts into the official shell.overlay slot', () => {
     const bundle = loadBundle()
-    equal(bundle.internals.currentStrategy(), 'slot:sidebar.right.pane', 'strategy')
-    const reg = bundle.registrations.find((entry) => entry.registration.name === 'sidebar.right.pane')
-    assert(reg !== undefined, 'shadowing registration present')
-    equal(reg.registration.priority, -1, 'shadowing priority -1')
-    equal(bundle.attrs['data-dsh-governor-mount'], 'slot:sidebar.right.pane', 'strategy recorded')
+    equal(bundle.internals.currentStrategy(), 'overlay', 'strategy')
+    const reg = bundle.registrations.find((entry) => entry.registration.name === 'shell.overlay')
+    assert(reg !== undefined, 'overlay registration present')
+    equal(reg.registration.id, 'dsh-governor-mode', 'drawer id')
+    includes(bundle.injected.join(','), 'shell.overlay', 'injected into the overlay slot')
+    equal(bundle.attrs['data-dsh-governor-mount'], 'overlay', 'strategy recorded on the root')
+    equal(bundle.attrs['data-dsh-governor-panel'], 'closed', 'drawer starts closed on the root')
+    // 旧路线彻底移除：不再开官方右栏、不再猜 pane 注册面。
+    const source = readFileSync(clientPath, 'utf8')
+    equal(source.includes('openRightbar('), false, 'official rightbar is never opened')
+    equal(source.includes('registerPane'), false, 'no pane registration guesswork')
   })
 
-  suite.check('mount strategy three: main keyed panel as the fallback', () => {
-    const bundle = loadBundle({ rejectSlots: ['sidebar.right.pane', 'sidebar.right.pane.content'] })
-    equal(bundle.internals.currentStrategy(), 'main', 'strategy')
-    const reg = bundle.registrations.find((entry) => entry.registration.name === 'main')
-    assert(reg !== undefined, 'main registration present')
-    equal(reg.registration.key, 'governor', 'main panel key')
-    equal(bundle.attrs['data-dsh-governor-mount'], 'main', 'strategy recorded')
+  suite.check('the drawer slides out of the right edge without taking column width', () => {
+    const bundle = loadBundle()
+    const internals = bundle.internals
+    const reg = bundle.registrations.find((entry) => entry.registration.name === 'shell.overlay')
+    const hooks = {
+      useWorkspaces: () => ({}),
+      useSessions: () => ({}),
+      useSessionStatus: () => new Map(),
+    }
+    const closed = reg.Component(hooks)
+    equal(closed.props['data-dsh-gov-drawer'], 'closed', 'closed marker')
+    equal(closed.props['data-dsh-gov-wired'], 'ok', 'root hooks reached the drawer')
+    equal(findByClass(closed, 'dsh-gov-drawer-close').length, 0, 'no close button while closed')
+    // 官方「展开右侧栏」按钮接管为抽屉开关
+    const handler = bundle.listeners.click[0]
+    const expandEvent = () => ({
+      target: { closest: (selector) => (selector === internals.EXPAND_SELECTOR ? {} : null) },
+      prevented: false,
+      preventDefault() { this.prevented = true },
+      stopPropagation() {},
+      stopImmediatePropagation() {},
+    })
+    const opened = expandEvent()
+    handler(opened)
+    equal(opened.prevented, true, 'official expand button is hijacked')
+    equal(internals.state.panelOpen, true, 'drawer opens')
+    equal(bundle.attrs['data-dsh-governor-panel'], 'open', 'root marker reads open')
+    // 抽屉样式：贴右边缘的绝对浮层 + 从右外侧滑入
+    includes(internals.STYLESHEET, '.dsh-gov-drawer{position:absolute', 'anchored overlay')
+    includes(internals.STYLESHEET, 'transform:translateX(104%)', 'parked outside the right edge')
+    includes(internals.STYLESHEET, '.dsh-gov-drawer--open{transform:translateX(0)', 'slides in on open')
+    // 开着的抽屉带关闭按钮，按钮收起抽屉
+    const open = reg.Component(hooks)
+    equal(open.props['data-dsh-gov-drawer'], 'open', 'open marker')
+    const close = findByClass(open, 'dsh-gov-drawer-close')
+    equal(close.length, 1, 'one close button while open')
+    close[0].props.onClick()
+    equal(internals.state.panelOpen, false, 'close button collapses the drawer')
+    equal(bundle.attrs['data-dsh-governor-panel'], 'closed', 'root marker back to closed')
   })
 
   suite.check('apply survives a Cordis-style proxy ctx (bare unknown-service reads throw)', () => {
@@ -653,7 +746,7 @@ async function runClient(reportFn) {
     // 访问抛 `cannot get property "x" without inject`。本插件曾在挂载期的
     // sidebarRight 探测里裸访问而整条目激活失败——这里确保永不复发。
     const bundle = loadBundle({ cordisProxy: true })
-    equal(bundle.internals.currentStrategy(), 'slot:sidebar.right.pane', 'activation completed, strategy chosen')
+    equal(bundle.internals.currentStrategy(), 'overlay', 'activation completed, strategy chosen')
     equal(bundle.disposers.length, 5, 'all five effects registered and disposed cleanly')
     includes(bundle.injected.join(','), 'conversation.input.left', 'draft bridge still injected')
     equal(bundle.attrs['data-dsh-governor-mode'], '', 'root marker set')
@@ -678,11 +771,15 @@ async function runClient(reportFn) {
     // 行内按钮放行
     handler(makeEvent({ closest: (selector) => (selector === PASS_SELECTOR ? {} : null) }))
     equal(prevented.value, false, 'inline button passes through')
-    // 工作区行拦截并选中该工作区
+    // 工作区行拦截：直接打开该工作区的总督会话（一级栏不再是文件夹，是总督）
     const row = { getAttribute: () => 'workspace:w9' }
+    bundle.internals.latest.wsSessions = { w9: ['s-gov', 's-a'] }
     handler(makeEvent({ closest: (selector) => (selector.startsWith('[data-row-key') ? row : null) }))
     equal(prevented.value, true, 'workspace row is intercepted')
     equal(bundle.internals.state.workspaceId, 'w9', 'the workspace is selected')
+    equal(bundle.openCalls.join(','), 's-gov', 'the workspace governor session is opened')
+    equal(bundle.internals.state.panelOpen, true, 'the drawer opens with the session')
+    equal(bundle.attrs['data-dsh-governor-panel'], 'open', 'root marker reads open')
     // 原生新建会话控件按 aria-label 定位（走下一个用例的分支，不落到行点击上）
     includes(NEW_SESSION_SELECTOR, 'aria-label="新建会话"', 'native new-session control is matched by aria-label')
   })
@@ -723,6 +820,59 @@ async function runClient(reportFn) {
     equal(svg.type, 'svg', 'avatar is an svg')
     equal(svg.props.viewBox, '0 0 12 12', 'pixel viewbox')
     assert(svg.props.children.length > 40, 'avatar has pixels')
+  })
+
+  suite.check('the DOM avatar builder produces a 12x12 pixel svg', () => {
+    const internals = I()
+    const svg = internals.pixelAvatarElement('gov', 42)
+    equal(svg.tagName, 'svg', 'svg element')
+    equal(svg.getAttribute('viewBox'), '0 0 12 12', 'pixel viewbox')
+    assert(svg.children.length > 40, 'one rect per painted pixel')
+    equal(svg.children[0].tagName, 'rect', 'pixels are rects')
+    const fills = svg.children.map((node) => String(node.getAttribute('fill')))
+    equal(fills.filter((fill) => fill.startsWith('#') !== true).length, 0, 'every pixel carries a palette fill')
+    includes(fills.join(','), '#ff5500', 'governor orange present')
+  })
+
+  /** 一级栏工作区行：官方「文件夹 + 名称」两截的假树。 */
+  function fakeWorkspaceRow(workspaceId, title) {
+    const row = fakeEl('div')
+    const folder = fakeEl('span')
+    const icon = fakeEl('svg')
+    folder.appendChild(icon)
+    const chevron = fakeEl('span')
+    const text = fakeEl('span')
+    const label = fakeEl('span')
+    label.textContent = title
+    text.appendChild(label)
+    row.appendChild(folder)
+    row.appendChild(chevron)
+    row.appendChild(text)
+    row.setAttribute('data-row-key', 'workspace:' + workspaceId)
+    return { row, folder, icon, label }
+  }
+
+  suite.check('workspace rows swap the folder icon for the governor face + crown', () => {
+    const internals = I()
+    const { row, folder, icon, label } = fakeWorkspaceRow('w1', '阿尔法')
+    internals.decorateWorkspaceRow(row)
+    const avatar = folder.querySelector('.dsh-gov-avatar')
+    assert(avatar != null, 'the folder icon became the governor avatar')
+    equal(icon.parentNode, null, 'the folder svg was replaced out')
+    equal(avatar.getAttribute('width'), '100%', 'avatar fills the icon slot')
+    equal(folder.querySelectorAll('svg').length, 1, 'exactly one icon in the folder')
+    equal(label.querySelector('.dsh-gov-crown').textContent, internals.CROWN, 'crown after the name')
+    equal(row.getAttribute('data-dsh-gov-row'), 'true', 'row marked decorated')
+    // 幂等：官方重渲染后再装饰一次不会堆叠头像或徽记
+    internals.decorateWorkspaceRow(row)
+    equal(folder.children.length, 1, 'still one icon child')
+    equal(label.querySelectorAll('.dsh-gov-crown').length, 1, 'still one crown')
+    // 子树批量装饰
+    const root = fakeEl('div')
+    root.appendChild(fakeWorkspaceRow('w2', '贝塔').row)
+    root.appendChild(row)
+    internals.decorateWorkspaceRows(root)
+    equal(root.querySelectorAll('[data-dsh-gov-row]').length, 2, 'both rows decorated')
   })
 
   suite.check('worker rows are laid out 1..4 centered, 5+ split', () => {
@@ -881,10 +1031,7 @@ async function runClient(reportFn) {
   suite.check('the panel renders all four sections', () => {
     const bundle = loadBundle()
     const registrations = bundle.registrations
-    const panel = registrations.find((entry) => {
-      const reg = entry.registration
-      return (reg.key === 'governor' || reg.name === 'sidebar.right.pane')
-    })
+    const panel = registrations.find((entry) => entry.registration.name === 'shell.overlay')
     assert(panel !== undefined, 'the panel component is registered')
     const element = panel.Component({
       useWorkspaces: (pick) => pick({ items: [{ workspaceId: 'w1', title: '阿尔法', sessionIds: ['s-gov', 's-a', 's-b'] }] }),
