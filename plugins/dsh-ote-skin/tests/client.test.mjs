@@ -214,6 +214,11 @@ export async function run(report) {
     includes(css, '[class*="_triggerLabel"]', 'model/permission chip ellipsis')
     includes(css, 'text-overflow: ellipsis', 'ellipsis is armed')
     includes(css, 'li::marker', 'list marker colour')
+    includes(css, '[data-composer-card="true"]', 'composer card fill rule')
+    includes(css, 'background-color: #212121;', 'composer card fill is the owner colour')
+    includes(css, '[class*="_sidebarCol"] > div > [class*="_root"]', 'sidebar root rule')
+    includes(css, 'background-color: #292929;', 'sidebar root fill')
+    includes(css, 'color: #ffffff;', 'sidebar root text')
   })
 
   suite.check('the plugin sheet covers the audited third-party hooks', () => {

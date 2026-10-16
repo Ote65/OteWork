@@ -292,6 +292,18 @@ window.__ModuleLoader__.load({
 			'html[' + SKIN_ATTR + '] [class*="_composerStack"] [class*="_card"]:focus-within{',
 			'  box-shadow: var(--dsh-ote-glow-ring);',
 			'}',
+			/* 输入卡底色：主人钦定 #212121（2026-10-16）。data 属性是宿主自带的
+			 * 稳定钩子，不用赌 CSS-module 的名字。 */
+			'html[' + SKIN_ATTR + '] [data-composer-card="true"]{',
+			'  background-color: #212121;',
+			'}',
+
+			/* 侧栏根：实底 #292929、文字纯白 —— 主人钦定（2026-10-16）。
+			 * 只打 sidebarCol 的直接孙级 root，不波及其他 _root。 */
+			'html[' + SKIN_ATTR + '] [class*="_sidebarCol"] > div > [class*="_root"]{',
+			'  color: #ffffff;',
+			'  background-color: #292929;',
+			'}',
 
 			/* §6.4 选中态用左缘 2px 橙竖条；inset 阴影不动盒模型，不碰布局。 */
 			'html[' + SKIN_ATTR + '] [class*="_sessionRow"][class*="_selected"],',
