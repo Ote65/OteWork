@@ -1,0 +1,45 @@
+{
+  "name": "dsh-governor-mode",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DeepSeek Harness 的第二种工作模式：主区顶栏最左一个「经典｜总督」开关，总督模式下点侧栏工作区行改为打开总督页（总督头像 + 最多 8 个子会话头像 + 直角母线连线），全部沿用宿主 --dsw-* 语义令牌。",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "governor",
+    "workspace"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4"
+  },
+  "engines": {
+    "node": ">=22.19"
+  }
+}

@@ -20,6 +20,7 @@
 | [`dsh-token-hud`](plugins/dsh-token-hud/README.md) | **侧栏 token 计量卡片**：累计用量、今日用量与缓存命中率，从会话投影缓存聚合而来。 |
 | [`dsh-session-bridge`](plugins/dsh-session-bridge/README.md) | **跨 Agent 会话桥**：把一个 DSH 会话经已鉴权的 `/api` 通道暴露给另一个 Agent（Codex、Trae…），提供发现文档、transcript、实时状态与一键复制的交接提示词。 |
 | [`dsh-element-picker`](plugins/dsh-element-picker/README.md) | **元素引用**：在内置浏览器预览里点选 UI 元素，一条精确的源码引用就落到输入框里。 |
+| [`dsh-governor-mode`](plugins/dsh-governor-mode/README.md) | **总督模式**：主区顶栏最左加「经典｜总督」开关；总督模式下点侧栏工作区行改为打开总督页（总督 + 最多 8 个子会话的像素头像 + 直角母线连线），全部沿用宿主 `--dsw-*` 语义令牌，官方组件零改动。 |
 | `dsh-picker-probe` | **诊断台**：开发 `dsh-element-picker` 时用来经真实 webview 桥驱动 picker 的一次性诊断插件，保留仅供复现。 |
 
 ## 仓库结构
@@ -31,6 +32,7 @@ plugins/
 ├── dsh-token-hud/        侧栏 token 计量
 ├── dsh-session-bridge/   跨 Agent 会话桥
 ├── dsh-element-picker/   预览内元素拾取
+├── dsh-governor-mode/    总督模式（第二工作模式）
 └── dsh-picker-probe/     拾取器的诊断台
 ```
 

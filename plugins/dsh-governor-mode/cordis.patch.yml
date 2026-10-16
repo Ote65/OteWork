@@ -1,0 +1,7 @@
+# dsh-governor-mode — profile bundle patch.
+#
+# 功能全部在浏览器半：宿主行只用于让 harness 下发本包的 dsh.client bundle，
+# 它的 apply 不做任何事。
+- insert:
+    - id: governor-mode
+      name: dsh-governor-mode
