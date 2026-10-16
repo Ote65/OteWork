@@ -332,7 +332,7 @@ export async function run(report) {
     equal(pinned.join(','), 'height:1', `only the hairline is absolute: ${pinned.join(',')}`)
   })
 
-  suite.check('keeps a strict hierarchy: hero > unit > value > title > label', () => {
+  suite.check('keeps a strict hierarchy: hero > unit > value > label', () => {
     const { element } = render()
     const sizes = new Map()
     const walk = (node) => {
@@ -352,7 +352,6 @@ export async function run(report) {
     const hero = sizes.get('53.39')
     const value = sizes.get('4.51')
     const label = sizes.get('今日 Token')
-    const title = sizes.get('Token 计量')
     // '亿' appears on both the hero and the input tile, so read the hero's own
     // unit off the tree rather than out of the text-keyed map.
     const card = findByMarker(element, 'card')
@@ -361,9 +360,8 @@ export async function run(report) {
     equal(hero, 3, 'hero number')
     equal(unit, 1.4, 'hero unit')
     equal(value, 1.35, 'tile value')
-    equal(title, 1.2, 'title')
     equal(label, 0.95, 'tile label')
-    assert(hero > unit && unit > value && value > title && title > label, `strict hierarchy: ${hero} > ${unit} > ${value} > ${title} > ${label}`)
+    assert(hero > unit && unit > value && value > label, `strict hierarchy: ${hero} > ${unit} > ${value} > ${label}`)
   })
 
   suite.check('injects one stylesheet with the scoped wrap rule and the card material', () => {
@@ -383,12 +381,12 @@ export async function run(report) {
     const { element } = render()
     equal(
       markersOf(element).join(' > '),
-      'block > card > unit > hint > trend > details > tile > tile > ring > tile',
+      'block > card > unit > trend > details > tile > tile > ring > tile',
       'marker order',
     )
     const card = findByMarker(element, 'card')
     const [header, hero, details] = card.props.children
-    equal(header.props.children.length, 2, 'header: identity + unit switch')
+    equal(header.props.children.length, 2, 'header: collapse-tag slot + unit switch')
     equal(header.props.children[1].type, 'button', 'the unit switch is a real button')
     equal(hero.props.children.length, 3, 'hero: label row, number row, sub-line')
     const [hairline, grid] = details.props.children.props.children
@@ -402,9 +400,17 @@ export async function run(report) {
     const grid = findByMarker(element, 'details').props.children.props.children[1]
     for (const tile of grid.props.children) {
       const children = tile.props.children.filter((child) => child !== null && child !== undefined)
-      equal(children.length, 2, 'label row + value row, no caption line')
-      equal(children[0].props.style.marginBottom, '0.2em', 'label sits tight above the value')
+      // A plain tile is just its column; the cache tile adds the ring beside it.
+      const body = children[0]
+      equal(body.props.style.flexDirection, 'column', 'label and value stack in a column')
+      const rows = body.props.children.filter((child) => child !== null && child !== undefined)
+      equal(rows.length, 2, 'label row + value row, no caption line')
+      equal(rows[0].props.style.marginBottom, '0.2em', 'label sits tight above the value')
     }
+    const cacheTile = grid.props.children[1]
+    const ring = cacheTile.props.children.filter((child) => child !== null && child !== undefined)[1]
+    equal(ring.props['data-dsh-token-hud'], 'ring', 'the ring is a direct child of the tile')
+    equal(ring.props.style.alignSelf, 'stretch', 'the ring stretches to the tile height')
     const css = bundle.head.children[0].textContent
     const tile = css.slice(css.indexOf('[data-dsh-token-hud="tile"]{'))
     assert(tile.includes('background:var(--dsw-alias-bg-layer-1'), `solid raised fill, not a tint: ${tile}`)
@@ -424,7 +430,6 @@ export async function run(report) {
 
     const text = textsOf(element).join(' | ')
     assert(text.includes('· 已收纳'), `header tag: ${text}`)
-    assert(text.includes('轻点展开指标'), `the hint flips: ${text}`)
     assert(text.includes('今日: '), `today label in the summary: ${text}`)
     assert(text.includes('4.51亿'), `today value in the summary: ${text}`)
     assert(text.includes('缓存率: '), `cache label in the summary: ${text}`)
@@ -442,29 +447,22 @@ export async function run(report) {
     equal(details.props.style.pointerEvents, undefined, 'interactive')
     equal(details.props['aria-hidden'], undefined, 'in the a11y tree')
     const text = textsOf(element).join(' | ')
-    assert(text.includes('轻点收纳'), `hint flips back: ${text}`)
+    assert(text.includes('· 已收纳') === false, `the tag drops when open: ${text}`)
     assert(text.includes('-56.2%'), `trend chip back: ${text}`)
     equal(findByMarker(element, 'summary'), null, 'no summary while expanded')
   })
 
-  suite.check('carries no expand/collapse glyph, and the hint is the real control', () => {
+  suite.check('the card itself is the collapse control; no hint row remains', () => {
     const { element, bundle } = render()
-    // No icon anywhere in the header or the hint row.
+    // No icon anywhere in the header.
     const header = findByMarker(element, 'card').props.children[0]
     equal(header.props.children[1].type, 'button', 'the only header control is the unit switch')
-    equal(header.props.children[1].props.children.join(''), '单位：亿', 'and it renders text, not a glyph')
+    equal(String(header.props.children[1].props.children), '单位：亿', 'and it renders text, not a glyph')
     equal(bundle.head.children[0].textContent.includes('chevron'), false, 'no chevron rules left in the sheet')
 
-    const hint = findByMarker(element, 'hint')
-    equal(hint.type, 'button', 'the hint is a real button')
-    equal(hint.props.style, undefined, 'its look lives in the stylesheet')
-    equal(hint.props['aria-expanded'], 'true', 'reports the state')
-    assert(typeof hint.props.onClick === 'function', 'hint handler')
-    assert(typeof findByMarker(element, 'card').props.onClick === 'function', 'the card toggles too')
-
-    const shut = findByMarker(render({ collapsed: true }).element, 'hint')
-    equal(shut.props['aria-expanded'], 'false', 'reports collapsed')
-    equal(textsOf(shut).join(''), '轻点展开指标', 'and says what a click will do')
+    equal(findByMarker(element, 'hint'), null, 'the hint button is gone')
+    assert(typeof findByMarker(element, 'card').props.onClick === 'function', 'the card toggles')
+    equal(textsOf(element).join(' ').includes('轻点'), false, 'no hint strings remain')
   })
 
   suite.check('remembers the collapse choice and swallows the nested clicks', () => {
@@ -475,15 +473,14 @@ export async function run(report) {
     equal(bundle.react.states[2].value, true, 'the card collapsed it')
     equal(bundle.store.get('dsh-token-hud:collapsed'), '1', 'and remembered it')
 
-    // The nested controls must not reach the card's collapse handler.
+    // The nested control must not reach the card's collapse handler.
     let stopped = 0
     const event = { stopPropagation() { stopped += 1 } }
     findByMarker(element, 'unit').props.onClick(event)
-    findByMarker(element, 'hint').props.onClick(event)
-    equal(stopped, 2, 'both nested controls swallow the click')
+    equal(stopped, 1, 'the unit switch swallows the click')
     equal(bundle.react.states[1].value, 'million', 'the unit switch still switched')
-    equal(bundle.react.states[2].value, false, 'and the hint toggled exactly once')
-    equal(bundle.store.get('dsh-token-hud:collapsed'), '0', 'and remembered that too')
+    equal(bundle.react.states[2].value, true, 'and the card stayed collapsed')
+    equal(bundle.store.get('dsh-token-hud:collapsed'), '1', 'and the choice is remembered')
   })
 
   suite.check('removes its stylesheet on dispose', () => {
@@ -563,11 +560,11 @@ export async function run(report) {
 
   suite.check('shows the labels the design calls for', () => {
     const text = textsOf(render().element).join(' | ')
-    assert(text.includes('Token 计量'), `title: ${text}`)
-    assert(text.includes('总用量'), `hero label: ${text}`)
+    assert(text.includes('总消耗'), `hero label: ${text}`)
     assert(text.includes('今日 Token'), `today tile: ${text}`)
-    assert(text.includes('缓存命中率'), `cache tile: ${text}`)
+    assert(text.includes('命中率'), `cache tile: ${text}`)
     assert(text.includes('输入 Token'), `input tile: ${text}`)
+    assert(text.includes('Token 计量') === false, `the title is gone: ${text}`)
   })
 
   suite.check('maps the host payload onto the design TokenMetrics', () => {
@@ -619,7 +616,9 @@ export async function run(report) {
     const { element } = render()
     const ring = findByMarker(element, 'ring')
     assert(ring !== null, 'ring rendered')
-    equal(ring.props.style.width, '1.4em', 'ring scales with the base')
+    equal(ring.props.style.alignSelf, 'stretch', 'the ring stretches to the tile height')
+    equal(ring.props.style.width, 'auto', 'its width follows the square aspect')
+    equal(ring.props.style.aspectRatio, '1', 'it stays round')
     const fill = ring.props.children[1]
     const circumference = 2 * Math.PI * 18
     close(fill.props.strokeDashoffset, circumference * (1 - 0.986), 0.05, 'ring offset')
@@ -644,7 +643,6 @@ export async function run(report) {
   suite.check('falls back to English for a non-Chinese document', () => {
     const { element } = render({ lang: 'en-US' })
     const text = textsOf(element).join(' | ')
-    assert(text.includes('Token Usage'), `english title missing: ${text}`)
     assert(text.includes('All time'), `english hero label missing: ${text}`)
     assert(text.includes('Cache hit rate'), `english tile missing: ${text}`)
   })
@@ -652,7 +650,7 @@ export async function run(report) {
   suite.check('prefers the shell translator when one is supplied', () => {
     const { element } = render({ t: (key) => `«${key}»` })
     const text = textsOf(element).join(' | ')
-    assert(text.includes('«title»'), `translator unused: ${text}`)
+    assert(text.includes('«totalUsage»'), `translator unused: ${text}`)
   })
 
   suite.check('the unit switch is interactive', () => {

@@ -4,10 +4,10 @@
  * A token meter inside the **left sidebar**, in the shell's additive
  * `sidebar.footer.action` seat (directly above the Settings row).
  *
- * The layout is the supplied `TokenCard` design — header with an accent icon
- * tile and a unit switch, a dominant hero number with a quiet unit, a trend /
- * cumulative sub-line, an iOS hairline, then three rounded metric tiles, the
- * cache one carrying a miniature activity ring.
+ * The layout is the supplied `TokenCard` design — a quiet header with a unit
+ * switch, a dominant hero number with a quiet unit, a trend / cumulative
+ * sub-line, an iOS hairline, then three rounded metric tiles, the cache one
+ * carrying an activity ring that stretches to the tile's full height.
  *
  * Three things this file has to do that the original Tailwind component did not:
  *
@@ -58,7 +58,6 @@ window.__ModuleLoader__.load({
     var FONT = '-apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", system-ui, sans-serif'
 
     /** The design's accent palette (Tailwind 500s), which has no theme token. */
-    var BLUE = '#3b82f6'
     var EMERALD = '#10b981'
     var AMBER = '#f59e0b'
     var INDIGO = '#6366f1'
@@ -113,16 +112,6 @@ window.__ModuleLoader__.load({
       'transition:color .2s ease,background-color .2s ease;',
       '}',
       '[data-dsh-token-hud="unit"]:hover{color:var(--dsw-alias-label-primary,#e7ebf3);background:color-mix(in srgb,var(--dsw-alias-label-primary,#fff) 8%,transparent)}',
-      // The collapse affordance in the hero's label row. It reads as the hint
-      // text it looks like, but it is a real control: the card is click-only, so
-      // this is what a keyboard reaches and what announces the state.
-      '[data-dsh-token-hud="hint"]{',
-      'background:none;border:0;padding:0;cursor:pointer;flex:none;white-space:nowrap;',
-      'font:inherit;font-size:0.9em;line-height:1;',
-      'color:var(--dsw-alias-label-tertiary,rgba(231,235,243,.46));',
-      'transition:color .2s ease;',
-      '}',
-      '[data-dsh-token-hud="hint"]:hover{color:var(--dsw-alias-label-secondary,rgba(231,235,243,.72))}',
       // Collapsing the detail block: `0fr` animates a grid row to zero height,
       // which is the one way to transition to an intrinsic height without
       // measuring it in JS.
@@ -130,7 +119,7 @@ window.__ModuleLoader__.load({
       '[data-dsh-token-hud="details"]>div{overflow:hidden;min-height:0}',
       '[data-dsh-token-hud="ring"]{transition:stroke-dashoffset .5s ease-out}',
       '@media (prefers-reduced-motion:reduce){',
-      '[data-dsh-token-hud="card"],[data-dsh-token-hud="unit"],[data-dsh-token-hud="hint"],',
+      '[data-dsh-token-hud="card"],[data-dsh-token-hud="unit"],',
       '[data-dsh-token-hud="details"],[data-dsh-token-hud="ring"]{transition:none}',
       '}',
     ].join('')
@@ -138,12 +127,11 @@ window.__ModuleLoader__.load({
     /** Strings for the two locales the harness ships. */
     var DICTIONARIES = {
       zh: {
-        title: 'Token 计量',
-        totalUsage: '总用量',
+        totalUsage: '总消耗',
         vsYesterday: '较昨日',
         cumulative: '累计',
         todayToken: '今日 Token',
-        cacheHit: '缓存命中率',
+        cacheHit: '命中率',
         inputToken: '输入 Token',
         ioRatio: '输入/输出比',
         unitLabel: '单位',
@@ -156,16 +144,11 @@ window.__ModuleLoader__.load({
         output: '输出',
         cacheRead: '缓存读',
         collapsedTag: '· 已收纳',
-        hintCollapse: '轻点收纳',
-        hintExpand: '轻点展开指标',
-        collapseHint: '点击收纳卡片',
-        expandHint: '点击展开卡片详情',
         summaryToday: '今日',
         summaryCache: '缓存率',
         saved: '节约',
       },
       en: {
-        title: 'Token Usage',
         totalUsage: 'All time',
         vsYesterday: 'vs yesterday',
         cumulative: 'total',
@@ -183,10 +166,6 @@ window.__ModuleLoader__.load({
         output: 'Out',
         cacheRead: 'Cache read',
         collapsedTag: '· Collapsed',
-        hintCollapse: 'tap to collapse',
-        hintExpand: 'tap to expand',
-        collapseHint: 'Click to collapse the card',
-        expandHint: 'Click to expand the card',
         summaryToday: 'Today',
         summaryCache: 'Cache',
         saved: 'Saved',
@@ -265,19 +244,6 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /** The filled bolt of the header's accent tile. */
-    function boltIcon(size) {
-      return react.createElement(
-        'svg',
-        {
-          viewBox: '0 0 24 24', fill: 'currentColor', stroke: 'currentColor',
-          strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true',
-          style: { display: 'block', width: size, height: size },
-        },
-        react.createElement('polygon', { points: '13 2 3 14 12 14 11 22 21 10 12 10 13 2' }),
-      )
-    }
-
     var ICON_SPARKLES = ['M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z']
     var ICON_DATABASE = ['M3 5v14a9 3 0 0 0 18 0V5', 'M3 12a9 3 0 0 0 18 0']
     var ICON_LAYERS = [
@@ -317,7 +283,9 @@ window.__ModuleLoader__.load({
         {
           'data-dsh-token-hud': 'ring', viewBox: '0 0 44 44',
           'aria-hidden': 'true',
-          style: { flex: 'none', marginLeft: 'auto', transform: 'rotate(-90deg)', width: '1.4em', height: '1.4em' },
+          // Stretches to the tile's full content height; the square viewBox plus
+          // `aspect-ratio` keeps it round, so its height is flush with the tile.
+          style: { flex: 'none', alignSelf: 'stretch', width: 'auto', aspectRatio: '1', transform: 'rotate(-90deg)' },
         },
         react.createElement('circle', {
           key: 'track', cx: 22, cy: 22, r: RING_RADIUS, fill: 'none',
@@ -380,16 +348,6 @@ window.__ModuleLoader__.load({
     var HEAD_LEFT = { display: 'flex', alignItems: 'center', gap: '0.7em', minWidth: 0 }
     /** The "· 已收纳" suffix, shown only while collapsed. */
     var TAG = { fontSize: '0.9em', color: L3, whiteSpace: 'nowrap' }
-    var ICON_TILE = {
-      width: '2.2em', height: '2.2em', borderRadius: '0.7em', flex: 'none',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'color-mix(in srgb, ' + BLUE + ' 14%, transparent)',
-      color: BLUE,
-    }
-    var TITLE = {
-      fontSize: '1.2em', fontWeight: 600, letterSpacing: '-0.01em', color: L1,
-      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-    }
 
     var HERO = { marginBottom: '1em' }
     var HERO_LABEL_ROW = {
@@ -422,7 +380,8 @@ window.__ModuleLoader__.load({
     var HAIRLINE = { height: 1, marginBottom: '0.9em', background: 'color-mix(in srgb, ' + L1 + ' 10%, transparent)' }
 
     var GRID = { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.7em' }
-    var TILE = { display: 'flex', flexDirection: 'column', padding: '0.6em 0.7em', minWidth: 0 }
+    var TILE = { display: 'flex', alignItems: 'stretch', gap: '0.5em', padding: '0.6em 0.7em', minWidth: 0 }
+    var TILE_BODY = { display: 'flex', flexDirection: 'column', minWidth: 0, flex: '1 1 auto' }
     var TILE_HEAD = { display: 'flex', alignItems: 'center', gap: '0.3em', marginBottom: '0.2em', minWidth: 0, color: L2 }
     var TILE_LABEL = { fontSize: '0.95em', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }
     var TILE_VALUE = { display: 'flex', alignItems: 'center', gap: '0.2em', minWidth: 0 }
@@ -442,17 +401,21 @@ window.__ModuleLoader__.load({
         { 'data-dsh-token-hud': 'tile', style: TILE },
         react.createElement(
           'div',
-          { style: TILE_HEAD },
-          props.glyph,
-          react.createElement('span', { style: TILE_LABEL }, props.label),
+          { style: TILE_BODY },
+          react.createElement(
+            'div',
+            { style: TILE_HEAD },
+            props.glyph,
+            react.createElement('span', { style: TILE_LABEL }, props.label),
+          ),
+          react.createElement(
+            'div',
+            { style: TILE_VALUE },
+            react.createElement('span', { style: TILE_NUMBER }, props.value),
+            props.unit === '' || props.unit === undefined ? null : react.createElement('span', { style: TILE_UNIT }, props.unit),
+          ),
         ),
-        react.createElement(
-          'div',
-          { style: TILE_VALUE },
-          react.createElement('span', { style: TILE_NUMBER }, props.value),
-          props.unit === '' || props.unit === undefined ? null : react.createElement('span', { style: TILE_UNIT }, props.unit),
-          props.extra === undefined ? null : props.extra,
-        ),
+        props.extra === undefined ? null : props.extra,
       )
     }
 
@@ -604,11 +567,6 @@ window.__ModuleLoader__.load({
           return next
         })
       }
-      var toggleFromHint = function (event) {
-        swallow(event)
-        toggleCollapsed()
-      }
-
       var inputDetail = formatTokens(metrics.inputTokens, 'auto')
       var outputDetail = formatTokens(metrics.outputTokens, 'auto')
       var detail = [
@@ -688,15 +646,13 @@ window.__ModuleLoader__.load({
         react.createElement(
           'div',
           { 'data-dsh-token-hud': 'card', style: CARD, onClick: toggleCollapsed },
-          // Header: accent tile, title, the collapse tag, and the unit switch.
+          // Header: the collapse tag and the unit switch.
           react.createElement(
             'div',
             { style: HEAD },
             react.createElement(
               'div',
               { style: HEAD_LEFT },
-              react.createElement('div', { style: ICON_TILE }, boltIcon('1.3em')),
-              react.createElement('span', { style: TITLE }, t('title')),
               collapsed ? react.createElement('span', { style: TAG }, t('collapsedTag')) : null,
             ),
             react.createElement(
@@ -705,8 +661,8 @@ window.__ModuleLoader__.load({
               t('unitLabel') + '：' + unitName,
             ),
           ),
-          // Hero: the grand total, the collapse control, and either the trend
-          // line or the collapsed summary.
+          // Hero: the grand total and either the trend line or the collapsed
+          // summary.
           react.createElement(
             'div',
             { style: HERO },
@@ -714,17 +670,6 @@ window.__ModuleLoader__.load({
               'div',
               { style: HERO_LABEL_ROW },
               react.createElement('span', { style: HERO_LABEL }, t('totalUsage')),
-              react.createElement(
-                'button',
-                {
-                  'data-dsh-token-hud': 'hint',
-                  type: 'button',
-                  onClick: toggleFromHint,
-                  title: collapsed ? t('expandHint') : t('collapseHint'),
-                  'aria-expanded': collapsed ? 'false' : 'true',
-                },
-                collapsed ? t('hintExpand') : t('hintCollapse'),
-              ),
             ),
             react.createElement(
               'div',
