@@ -294,26 +294,31 @@ window.__ModuleLoader__.load({
 			'  background: rgba(255, 255, 255, 0.06);',
 			'  color: #f1f5f9;',
 			'}',
-			/* Composer card glow (owner request, 2026-10-16). The card fill stays
-			 * the owner's #212121; the data attribute is the host's stable hook,
-			 * so we do not bet on a CSS-module name here. CSS floors the glow for
-			 * the interaction states through `--ote-floor` (rest / hover / focus),
-			 * the JS half feeds the typing component `--ote-typed` (0 to 0.55)
-			 * from the keystroke rate, and box-shadow blends both into one orange
-			 * glow that fades through the transition. */
+			/* Composer card glow (owner request, 2026-10-16, strengthened the same
+			 * day: the first pass read as barely-there). The card fill stays the
+			 * owner's #212121; the data attribute is the host's stable hook, so we
+			 * do not bet on a CSS-module name here. CSS floors the glow for the
+			 * interaction states through `--ote-floor` (rest / hover / focus), the
+			 * JS half feeds the typing component `--ote-typed` (0 to 0.8) from the
+			 * keystroke rate. One box-shadow carries two layers of the same orange:
+			 * an inset 1px rim that reads as the border lighting up, and a wide
+			 * outer bloom. Both fade through the transition. */
 			'html[' + SKIN_ATTR + '] [data-composer-card="true"]{',
 			'  background-color: #212121;',
 			'  --ote-floor: 0;',
 			'  --ote-typed: 0;',
-			'  box-shadow: 0 0 calc(22px * (var(--ote-floor, 0) + var(--ote-typed, 0))) rgba(255, 90, 31, calc(0.45 * (var(--ote-floor, 0) + var(--ote-typed, 0))));',
+			'  box-shadow:',
+			'    inset 0 0 0 1px rgba(255, 90, 31, calc(min(1, 1.8 * (var(--ote-floor, 0) + var(--ote-typed, 0))))),',
+			'    0 0 calc(45px * (var(--ote-floor, 0) + var(--ote-typed, 0))) rgba(255, 90, 31, calc(min(1, 0.7 * (var(--ote-floor, 0) + var(--ote-typed, 0)))));',
 			'  transition: box-shadow 0.25s ease-out;',
 			'}',
-			/* §7.3 辉光只属于交互态（§5.1 纪律）；focus 规则在后，同时命中时赢。 */
+			/* §7.3 辉光只属于交互态（§5.1 纪律）；focus 规则在后，同时命中时赢。
+			 * hover 已够点亮边框描边，focus 直接把 1px 内描边推到全亮橙。 */
 			'html[' + SKIN_ATTR + '] [data-composer-card="true"]:hover{',
-			'  --ote-floor: 0.14;',
+			'  --ote-floor: 0.2;',
 			'}',
 			'html[' + SKIN_ATTR + '] [data-composer-card="true"]:focus-within{',
-			'  --ote-floor: 0.45;',
+			'  --ote-floor: 0.55;',
 			'}',
 
 			/* Send button, three states (owner request, 2026-10-16): grey fill and
@@ -581,7 +586,7 @@ window.__ModuleLoader__.load({
 		 *
 		 * The component sheet floors the glow for hover and focus through
 		 * `--ote-floor`; this half feeds the typing component `--ote-typed`
-		 * (0 to 0.55) from the keystroke rate of the trailing second, and lets
+		 * (0 to 0.8) from the keystroke rate of the trailing second, and lets
 		 * it decay on a 200ms tick so the glow fades out instead of snapping.
 		 * The card is looked up lazily by its stable data attribute; when the
 		 * host DOM or these DOM APIs are not there the effect stays inert, so
@@ -616,8 +621,8 @@ window.__ModuleLoader__.load({
 				timer = setInterval(function () {
 					var now = Date.now();
 					while (strokes.length > 0 && now - strokes[0] > 1000) strokes.shift();
-					/* speed = strokes per second; 12 cps pins the typing half at .55 */
-					var target = Math.min(0.55, (strokes.length / 12) * 0.55);
+					/* speed = strokes per second; 8 cps pins the typing half at .8 */
+					var target = Math.min(0.8, (strokes.length / 8) * 0.8);
 					/* ease down geometrically when typing stops, snap up when it speeds */
 					typed = Math.max(target, typed * 0.6);
 					if (typed < 0.005) typed = 0;

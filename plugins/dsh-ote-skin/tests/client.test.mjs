@@ -237,17 +237,22 @@ export async function run(report) {
     /* 聚焦辉光（主人钦定 2026-10-16）：CSS 分层 floor + JS 打字分量合成外发光。 */
     includes(css, '[data-composer-card="true"]:hover', 'composer hover floor')
     includes(css, '[data-composer-card="true"]:focus-within', 'composer focus floor')
-    includes(css, '--ote-floor: 0.14;', 'hover floor value')
-    includes(css, '--ote-floor: 0.45;', 'focus floor value')
+    includes(css, '--ote-floor: 0.2;', 'hover floor value')
+    includes(css, '--ote-floor: 0.55;', 'focus floor value')
     includes(
       css,
-      'box-shadow: 0 0 calc(22px * (var(--ote-floor, 0) + var(--ote-typed, 0)))',
-      'glow blends the floor and the typing component'
+      'inset 0 0 0 1px rgba(255, 90, 31, calc(min(1, 1.8 * (var(--ote-floor, 0) + var(--ote-typed, 0)))))',
+      'the border lights up as an inset stroke layer'
     )
     includes(
       css,
-      'rgba(255, 90, 31, calc(0.45 * (var(--ote-floor, 0) + var(--ote-typed, 0))))',
-      'glow alpha follows the same blend'
+      '0 0 calc(45px * (var(--ote-floor, 0) + var(--ote-typed, 0)))',
+      'glow blur scales with the blended intensity'
+    )
+    includes(
+      css,
+      'rgba(255, 90, 31, calc(min(1, 0.7 * (var(--ote-floor, 0) + var(--ote-typed, 0)))))',
+      'glow alpha follows the same blend, capped'
     )
     includes(css, 'transition: box-shadow 0.25s ease-out', 'glow changes fade')
 
