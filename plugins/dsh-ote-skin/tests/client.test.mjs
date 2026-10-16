@@ -33,6 +33,11 @@ function sheetById(bundle, id) {
   return sheet.textContent
 }
 
+/** Drop @keyframes blocks: the layout guard only polices resting-state rules. */
+function stripKeyframes(css) {
+  return css.replace(/@keyframes[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, '')
+}
+
 /** A minimal element good enough for the skin's head half. */
 function makeElement(tagName) {
   const element = {
@@ -110,6 +115,23 @@ function loadBundle({ withTheme = true, source } = {}) {
     },
   }
 
+  /** Records what the sidebar-slide half registers, and can be driven by tests. */
+  const mutationObservers = []
+  const MutationObserverStub = class {
+    constructor(callback) {
+      this.callback = callback
+      this.observed = []
+      this.disconnected = false
+      mutationObservers.push(this)
+    }
+    observe(target, options) {
+      this.observed.push({ target, options })
+    }
+    disconnect() {
+      this.disconnected = true
+    }
+  }
+
   const theme = {
     overrideTokens(source_, overrides) {
       tokenCalls.push({ source: source_, overrides })
@@ -128,8 +150,8 @@ function loadBundle({ withTheme = true, source } = {}) {
   if (withTheme === true) ctx.theme = theme
 
   const text = source ?? readFileSync(CLIENT, 'utf8')
-  const run = new Function('window', 'document', 'console', text)
-  run(windowStub, documentStub, { warn: (...args) => warnings.push(args) })
+  const run = new Function('window', 'document', 'console', 'MutationObserver', text)
+  run(windowStub, documentStub, { warn: (...args) => warnings.push(args) }, MutationObserverStub)
 
   equal(specs.length, 1, 'one bundle registration')
   const spec = specs[0]
@@ -145,6 +167,7 @@ function loadBundle({ withTheme = true, source } = {}) {
     disposers,
     warnings,
     listeners,
+    mutationObservers,
     get head() {
       return documentStub.head.children
     },
@@ -230,8 +253,12 @@ export async function run(report) {
     includes(css, '[class*="_sidebarCol"] [class*="_fade"]', 'sidebar list fade killed')
     includes(css, '[class*="_frame"][data-animating]', 'collapse transition is overridden')
     includes(css, 'transition: grid-template-columns 0.42s cubic-bezier(0.16, 1, 0.3, 1);', 'column width eases with a strong expo curve')
-    /* 回归锁：收起态是窄版缩略栏，皮肤绝不许给它加常驻位移（上版翻车）。 */
-    assert(css.includes('translateX') !== true, 'no persistent transform on the collapsed sidebar')
+    includes(css, '@keyframes ote-sb-in{', 'the sidebar slide keyframe exists')
+    includes(css, '[class*="_sidebarCol"][data-ote-sb-in]{', 'the slide arms through a data attribute React never rewrites')
+    includes(css, 'animation: ote-sb-in 0.42s cubic-bezier(0.16, 1, 0.3, 1);', 'the slide runs on the strong expo curve')
+    /* 回归锁：收起态是窄版缩略栏，皮肤不许给它留常驻位移（上版翻车）。
+     * keyframes 里的瞬态位移豁免——动画播完即回到 none。 */
+    assert(stripKeyframes(css).includes('translateX') !== true, 'no persistent transform on the collapsed sidebar')
     includes(css, '[data-composer-card="true"]', 'composer card fill rule')
     includes(css, 'background-color: #212121;', 'composer card fill is the owner colour')
     includes(css, '[class*="_sidebarCol"] > div > [class*="_root"]', 'sidebar root rule')
@@ -309,7 +336,7 @@ export async function run(report) {
     bundle.exported.apply(bundle.ctx)
     for (const id of [STYLE_ID, PLUGIN_STYLE_ID]) {
       const css = sheetById(bundle, id)
-      const selectors = css
+      const selectors = stripKeyframes(css)
         .split('\n')
         .filter((line) => line.includes('{'))
         .map((line) => line.slice(0, line.indexOf('{')).trim())

@@ -357,12 +357,18 @@ window.__ModuleLoader__.load({
 			'  background: transparent;',
 			'}',
 
-			/* 侧栏收起/展开动画 —— 主人钦定（2026-10-16）：非线性缓动。
-			 * 宿主只在 data-animating 期间给 grid 列宽挂 .3s 过渡，且被
-			 * prefers-reduced-motion 整个掐掉。这里用更高优先级换成更慢、
-			 * 收尾更强的 expo 缓动；列宽收窄本身就是内容左移的滑移效果。
-			 * 注意：收起态是窄版缩略栏（图标轨），绝不能给它加常驻位移，
-			 * 否则缩略栏被推出屏幕、用户无法展开（上一版翻车教训）。 */
+			/* 侧栏收起/展开动画 —— 主人钦定（2026-10-16）：非线性滑移。
+			 * 宿主自带的 grid 列宽过渡在部分环境里不可见（减弱动态直接掐掉），
+			 * 所以动画由 JS 半层主动播：data-sidebar-collapsed 一翻转就给侧栏
+			 * 列重挂自终结的 keyframe（从左 18px 滑入落位），播完不留任何位移，
+			 * 缩略栏常驻位置不受影响；另保留对宿主列宽过渡的加强覆盖。 */
+			'@keyframes ote-sb-in{',
+			'  from{ transform: translateX(-18px); }',
+			'  to{ transform: none; }',
+			'}',
+			'html[' + SKIN_ATTR + '] [class*="_sidebarCol"][data-ote-sb-in]{',
+			'  animation: ote-sb-in 0.42s cubic-bezier(0.16, 1, 0.3, 1);',
+			'}',
 			'html[' + SKIN_ATTR + '] [class*="_frame"][data-animating]{',
 			'  transition: grid-template-columns 0.42s cubic-bezier(0.16, 1, 0.3, 1);',
 			'}',
@@ -658,6 +664,51 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
+		 * Sidebar slide (owner request, 2026-10-16).
+		 *
+		 * The host's grid-column transition is not visible in every environment
+		 * (reduced-motion kills it outright), so this half owns the motion: a
+		 * MutationObserver watches `data-sidebar-collapsed` and, on every flip,
+		 * re-arms a self-terminating keyframe on the sidebar column. The keyframe
+		 * ends at `transform: none`, so the narrow rail's resting position — the
+		 * thing the user clicks to expand — is never displaced.
+		 *
+		 * @returns a disposer that drops the observer.
+		 */
+		function installSidebarSlide() {
+			if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return function () {};
+
+			function replay(frame) {
+				if (frame == null || typeof frame.querySelector !== 'function') return;
+				var column = frame.querySelector('[class*="_sidebarCol"]');
+				if (column == null || typeof column.setAttribute !== 'function') return;
+				/* Flush the previous run so re-arming restarts the animation. */
+				if (typeof column.offsetWidth === 'number') void column.offsetWidth;
+				column.setAttribute('data-ote-sb-in', '');
+				if (typeof column.addEventListener !== 'function') return;
+				column.addEventListener('animationend', function clear() {
+					column.removeAttribute('data-ote-sb-in');
+					if (typeof column.removeEventListener === 'function') column.removeEventListener('animationend', clear);
+				});
+			}
+
+			var observer = new MutationObserver(function (records) {
+				for (var index = 0; index < records.length; index += 1) {
+					if (records[index].attributeName === 'data-sidebar-collapsed') replay(records[index].target);
+				}
+			});
+			observer.observe(document.documentElement, {
+				subtree: true,
+				attributes: true,
+				attributeFilter: ['data-sidebar-collapsed'],
+			});
+
+			return function () {
+				observer.disconnect();
+			};
+		}
+
+		/**
 		 * Browser-half entry point.
 		 * @param ctx - cordis client context (needs `effect`; `theme` optional).
 		 */
@@ -682,6 +733,7 @@ window.__ModuleLoader__.load({
 				'ote-skin: third-party plugin alignment'
 			);
 			ctx.effect(installTypingGlow, 'ote-skin: composer typing glow');
+			ctx.effect(installSidebarSlide, 'ote-skin: sidebar collapse slide');
 		}
 
 		exports.apply = apply;
