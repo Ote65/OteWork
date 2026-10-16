@@ -536,9 +536,11 @@ export function registerOn(webServer, path, handler) {
 /**
  * 给会话发提示词（/prompt 与 /bootstrap 共用的派发通路）。
  *
- * 底层是 DSH 的 `subagents.prompt`（@Remote），签名未经实测验证，防御式探测：
- * 服务缺失、方法缺失各回明确的 501；方法在则按候选调用形状依次尝试，第一个
- * 不抛错的赢，全失败回 501 并附每个形状的错误——绝不假装成功。
+ * 顶层会话（总督）走活 agent 的收件箱原语（followup/steer——官方团队信箱
+ * 投递给 lead 用的同款）；continuable 子会话兜底走 `subagents.prompt` 的
+ * **真签名**（实测确认：request 对象 {parentSessionId, childSessionId,
+ * requestId, delivery, content}，且只支持父→子）。全部不通时如实 501，
+ * 绝不假装成功。
  *
  * @param ctx - 插件上下文。
  * @param sessionId - 目标会话 id。
@@ -546,49 +548,51 @@ export function registerOn(webServer, path, handler) {
  * @returns `{ ok, via }` 或 `{ ok: false, status, error }`。
  */
 export async function promptSession(ctx, sessionId, text) {
-  const subagents = ctx.get('subagents')
-  if (subagents === undefined || subagents === null) {
-    return {
-      ok: false,
-      status: 501,
-      error: "subagents service unavailable: ctx.get('subagents') returned nothing; the DSH profile must expose the subagents @Remote service before prompts can be delivered",
-    }
-  }
-  if (typeof subagents.prompt !== 'function') {
-    const visible = Object.keys(subagents).filter((key) => typeof subagents[key] === 'function')
-    return {
-      ok: false,
-      status: 501,
-      error: `subagents service has no prompt() method; visible methods: [${visible.join(', ') || 'none'}] — cannot deliver prompts`,
-    }
-  }
-  const attempts = [
-    { via: 'prompt(sessionId, text)', run: () => subagents.prompt(sessionId, text) },
-    { via: 'prompt({ sessionId, text })', run: () => subagents.prompt({ sessionId, text }) },
-    { via: 'prompt({ session, text })', run: () => subagents.prompt({ session: sessionId, text }) },
-  ]
+  const errors = []
   const agents = ctx.get('agents')
   const agent = agents !== undefined && agents !== null && typeof agents.get === 'function' ? agents.get(sessionId) : undefined
   if (agent !== undefined && agent !== null) {
-    attempts.push({ via: 'prompt(agent, text)', run: () => subagents.prompt(agent, text) })
+    const message = {
+      id: 'governor-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10),
+      role: 'user',
+      content: [{ type: 'text', text }],
+      source: { kind: 'user' },
+    }
+    for (const method of ['followup', 'steer', 'send']) {
+      if (typeof agent[method] !== 'function') continue
+      try {
+        if (method === 'send') agent.send(message, 'next-turn', true)
+        else agent[method](message)
+        return { ok: true, via: 'agent.' + method }
+      } catch (error) {
+        errors.push('agent.' + method + ' → ' + String(error && error.message).slice(0, 160))
+      }
+    }
+  } else {
+    errors.push('no live agent for ' + sessionId)
   }
+  const subagents = ctx.get('subagents')
   const session = liveSession(ctx, sessionId)
-  if (session !== undefined && session !== null) {
-    attempts.push({ via: 'prompt(session, text)', run: () => subagents.prompt(session, text) })
-  }
-  const errors = []
-  for (const attempt of attempts) {
+  const parentId = session != null ? session.header?.parentSession : undefined
+  if (subagents !== undefined && subagents !== null && typeof subagents.prompt === 'function'
+    && typeof parentId === 'string' && parentId !== '') {
     try {
-      await attempt.run()
-      return { ok: true, via: attempt.via }
+      await subagents.prompt({
+        parentSessionId: parentId,
+        childSessionId: sessionId,
+        requestId: 'governor-' + Date.now().toString(36),
+        delivery: 'queue',
+        content: [{ type: 'text', text }],
+      }, new AbortController().signal)
+      return { ok: true, via: 'subagents.prompt(request)' }
     } catch (error) {
-      errors.push(`${attempt.via} → ${String(error && error.message).slice(0, 200)}`)
+      errors.push('subagents.prompt(request) → ' + String(error && error.message).slice(0, 160))
     }
   }
   return {
     ok: false,
     status: 501,
-    error: `subagents.prompt exists but every call shape failed: ${errors.join(' | ')}`,
+    error: `cannot deliver prompt to ${sessionId}: ${errors.join(' | ')}`,
   }
 }
 

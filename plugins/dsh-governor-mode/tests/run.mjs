@@ -80,7 +80,7 @@ function report(suite) {
 function fakeSession(events, options = {}) {
   const next = options.seq ?? (events.length === 0 ? 0 : events[events.length - 1].seq + 1)
   return {
-    header: { cwd: options.cwd },
+    header: { cwd: options.cwd, parentSession: options.parentSession },
     seq: next,
     snapshotEvents: (from = 0) => events.filter((event) => event.seq >= from),
   }
@@ -290,26 +290,45 @@ async function runHost(reportFn) {
     equal(body.questions[0].options[0].label, '方案A', 'option label')
   })
 
-  await suite.checkAsync('prompt validates input and degrades to 501 without subagents', async () => {
+  await suite.checkAsync('prompt degrades honestly when nothing can deliver', async () => {
     boot()
     const missing = await call('/prompt', { method: 'POST', body: {} })
-    equal(missing.status, 400, 'session and text are required')
-    const noService = await call('/prompt', { method: 'POST', body: { session: 'session-x', text: '干活' } })
-    equal(noService.status, 501, '501 when subagents is unavailable')
-    includes(noService.body.error, 'subagents', 'the reason names the missing service')
+    equal(missing.status, 400, 'text is required')
+    const noAgent = await call('/prompt', { method: 'POST', body: { session: 'session-x', text: '干活' } })
+    equal(noAgent.status, 501, '501 when there is no live agent and no parent-child path')
+    includes(noAgent.body.error, 'no live agent', 'the reason names the missing live agent')
   })
 
-  await suite.checkAsync('prompt succeeds through the first working call shape', async () => {
-    const prompted = []
+  await suite.checkAsync('prompt delivers through the live agent inbox', async () => {
+    const messages = []
     boot({
-      subagents: { prompt: async (sessionId, text) => { prompted.push({ sessionId, text }) } },
+      agents: { get: (id) => ({ followup: (message) => { messages.push({ id, message }) } }) },
     })
     const { status, body } = await call('/prompt', { method: 'POST', body: { session: 'session-x', text: '干活' } })
     equal(status, 200, 'status')
-    equal(body.ok, true, 'ok')
-    equal(body.via, 'prompt(sessionId, text)', 'the winning shape is reported')
-    equal(prompted.length, 1, 'delivered once')
-    equal(prompted[0].text, '干活', 'text delivered')
+    equal(body.via, 'agent.followup', 'the official inbox primitive is reported')
+    equal(messages.length, 1, 'delivered once')
+    equal(messages[0].message.content[0].text, '干活', 'text delivered as a user message')
+    equal(messages[0].message.role, 'user', 'role is user')
+    assert(typeof messages[0].message.id === 'string' && messages[0].message.id !== '', 'message carries an id')
+  })
+
+  await suite.checkAsync('prompt falls back to the real subagents.prompt request shape for child sessions', async () => {
+    const requests = []
+    boot({
+      sessions: [['s-child', fakeSession([], { parentSession: 's-parent' })], ['s-top', fakeSession([])]],
+      subagents: { prompt: async (request) => { requests.push(request); return { messageId: 'm-1' } } },
+    })
+    const child = await call('/prompt', { method: 'POST', body: { session: 's-child', text: '干活' } })
+    equal(child.status, 200, 'child delivered')
+    equal(child.body.via, 'subagents.prompt(request)', 'official request shape used')
+    equal(requests[0].parentSessionId, 's-parent', 'durable parent address travels')
+    equal(requests[0].childSessionId, 's-child', 'child id travels')
+    equal(requests[0].delivery, 'queue', 'queue delivery never interrupts')
+    equal(requests[0].content[0].text, '干活', 'content blocks')
+    // 顶层会话（无父）不硬塞 subagents：如实 501
+    const top = await call('/prompt', { method: 'POST', body: { session: 's-top', text: '干活' } })
+    equal(top.status, 501, 'top-level without live agent is an honest 501')
   })
 
   await suite.checkAsync('prompt prefers the native agentTeams mailbox when the lead is live', async () => {
@@ -332,11 +351,14 @@ async function runHost(reportFn) {
     const bad = await call('/prompt', { method: 'POST', body: { lead: 's-gov', target: 'ghost', text: '干活' } })
     equal(bad.status, 409, 'team error surfaces')
     includes(bad.body.error, 'not found', 'reason travels')
-    // 官方通路缺席（服务不在）：退回 session 老路
-    boot({ subagents: { prompt: async () => {} } })
-    const legacy = await call('/prompt', { method: 'POST', body: { lead: 's-gov', target: 'worker-1', session: 's-a', text: '干活' } })
+    // 官方信箱缺席（服务不在）：退回子会话 parent→child 兜底通路
+    boot({
+      sessions: [['s-a', fakeSession([], { parentSession: 's-gov' })]],
+      subagents: { prompt: async () => ({ messageId: 'm-9' }) },
+    })
+    const legacy = await call('/prompt', { method: 'POST', body: { lead: 's-none', target: 'worker-1', session: 's-a', text: '干活' } })
     equal(legacy.status, 200, 'legacy fallback works')
-    includes(legacy.body.via, 'prompt', 'went through subagents')
+    includes(legacy.body.via, 'subagents.prompt', 'went through the official child delivery')
   })
 
   await suite.checkAsync('answer replays the choice through userQuestions', async () => {
@@ -439,7 +461,7 @@ async function runHost(reportFn) {
   await suite.checkAsync('bootstrap builds the prompt and delivers it via the prompt path', async () => {
     const prompted = []
     boot({
-      subagents: { prompt: async (sessionId, text) => { prompted.push({ sessionId, text }) } },
+      agents: { get: (id) => ({ followup: (message) => { prompted.push({ id, text: message.content[0].text }) } }) },
     })
     const missing = await call('/bootstrap', { method: 'POST', body: {} })
     equal(missing.status, 400, 'session is required')
@@ -899,7 +921,7 @@ async function runClient(reportFn) {
     equal(bundle.tabOpenCalls[0].kind, 'governor', 'opens the governor kind')
   })
 
-  suite.check('sidebar interceptor passes inline controls and captures workspace rows', () => {
+  await suite.checkAsync('sidebar interceptor passes inline controls and adds governor logic to workspace rows', async () => {
     const bundle = loadBundle()
     const { PASS_SELECTOR, NEW_SESSION_SELECTOR } = bundle.internals
     equal(bundle.listeners.click.length, 1, 'one capturing click listener')
@@ -916,12 +938,13 @@ async function runClient(reportFn) {
     // 行内按钮放行
     handler(makeEvent({ closest: (selector) => (selector === PASS_SELECTOR ? {} : null) }))
     equal(prevented.value, false, 'inline button passes through')
-    // 工作区行拦截：打开该工作区的总督会话 + 右侧栏总督标签页（一级栏是总督入口）
+    // 工作区行拦截：不拦官方 onToggle（一级行照常展开/选中），总督逻辑追加执行
     const row = { getAttribute: () => 'workspace:w9' }
     bundle.internals.latest.wsSessions = { w9: ['s-gov', 's-a'] }
     bundle.internals.govBinds.w9 = { governor: 's-gov' }
     handler(makeEvent({ closest: (selector) => (selector.startsWith('[data-row-key') ? row : null) }))
-    equal(prevented.value, true, 'workspace row is intercepted')
+    equal(prevented.value, false, 'official row toggle is NOT blocked')
+    await new Promise((resolve) => setTimeout(resolve, 0))
     equal(bundle.internals.state.workspaceId, 'w9', 'the workspace is selected')
     equal(bundle.openCalls.join(','), 's-gov', 'the bound governor session is opened')
     equal(bundle.tabOpenCalls.length, 1, 'the governor tab is opened in the right sidebar')

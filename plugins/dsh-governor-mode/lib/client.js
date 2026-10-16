@@ -1891,11 +1891,11 @@ window.__ModuleLoader__.load({
         var row = null
         try { row = target.closest(ROW_SELECTOR) } catch (error) { row = null }
         if (row == null) return
-        event.preventDefault()
-        event.stopPropagation()
-        if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation()
+        // 一级行点击：不拦官方 onToggle（行要照常展开/选中，二级子会话露出来），
+        // 总督入口逻辑在官方动作之后追加执行（setTimeout 让位给 React 事件流）。
         var key = row.getAttribute('data-row-key') || ''
-        setWorkspace(key.slice('workspace:'.length))
+        var workspaceId = key.slice('workspace:'.length)
+        setTimeout(function () { setWorkspace(workspaceId) }, 0)
       }
       document.addEventListener('click', onClick, true)
       var stopWatching = watchSidebar()
