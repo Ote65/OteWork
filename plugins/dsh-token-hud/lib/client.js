@@ -339,8 +339,8 @@ window.__ModuleLoader__.load({
     }
     var HERO_LABEL = { fontSize: '1em', fontWeight: 500, color: L2 }
     var HERO_ROW = { display: 'flex', alignItems: 'baseline', gap: '0.5em' }
-    var HERO_NUMBER = { fontSize: '3em', fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.05, color: L1 }
-    var HERO_UNIT = { fontSize: '1.4em', fontWeight: 500, color: L2 }
+    var HERO_NUMBER = { fontSize: '3em', fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.05, color: '#ff5a1f' }
+    var HERO_UNIT = { fontSize: '1.4em', fontWeight: 500, color: '#ff5a1f' }
     var SUBS = {
       display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.3em 0.4em',
       marginTop: '0.2em', fontSize: '0.95em', color: L2,
